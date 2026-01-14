@@ -284,8 +284,23 @@ def train(args: argparse.Namespace):
     scorers_weight = [1 / len(args.reward)] * len(args.reward)
     scorers = dict(zip(args.reward, scorers_weight))
     logger.info("Using scorers: %s", scorers)
-
-    reward_fn = MultiScorer(scorers)
+    
+    # prepare scorer configs for Diffusion-RM
+    scorer_configs = {}
+    for reward_name in args.reward:
+        if reward_name in ["diffusion-rm-flux", "diffusion-rm-sd3"]:
+            if not args.diffusion_rm_checkpoint_path or not args.diffusion_rm_config_path:
+                raise ValueError(
+                    f"diffusion_rm_checkpoint_path and diffusion_rm_config_path must be provided when using {reward_name}"
+                )
+            scorer_configs[reward_name] = {
+                "checkpoint_path": args.diffusion_rm_checkpoint_path,
+                "config_path": args.diffusion_rm_config_path,
+                "device": args.diffusion_rm_device,
+                "u": args.diffusion_rm_u,
+            }
+    
+    reward_fn = MultiScorer(scorers, scorer_configs)
 
     train_dataset = TextPromptDataset(args.dataset, "train")
     test_dataset = TextPromptDataset(args.dataset, "test", max_num=args.validation_num)
@@ -872,7 +887,34 @@ def main():
     # ========== dataset arguments ===========
     group = parser.add_argument_group("dataset arguments")
     group.add_argument(
-        "--dataset", type=str, default="dataset/ocr", help="Path to the dataset"
+        "--dataset", type=str, default="dataset/ocr", help="Path to dataset"
+    )
+    
+    # ========== diffusion-rm arguments ===========
+    group = parser.add_argument_group("diffusion-rm arguments")
+    group.add_argument(
+        "--diffusion-rm-checkpoint-path",
+        type=str,
+        default=None,
+        help="Path to Diffusion-RM checkpoint directory",
+    )
+    group.add_argument(
+        "--diffusion-rm-config-path",
+        type=str,
+        default=None,
+        help="Path to Diffusion-RM config file",
+    )
+    group.add_argument(
+        "--diffusion-rm-u",
+        type=float,
+        default=0.9,
+        help="Noise level u for Diffusion-RM (default: 0.9)",
+    )
+    group.add_argument(
+        "--diffusion-rm-device",
+        type=str,
+        default="cuda",
+        help="Device for Diffusion-RM (default: cuda)",
     )
 
     args = parser.parse_args()

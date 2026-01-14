@@ -16,23 +16,34 @@ AVAILABLE_SCORERS = {
     "qwenvl-ocr-vllm": ("vllm", "QwenVLOCRVLLMScorer"),
     "qwenvl-vllm": ("vllm", "QwenVLVLLMScorer"),
     "unified-reward-vllm": ("vllm", "UnifiedRewardVLLMScorer"),
+    "diffusion-rm-flux": ("diffusion_rm", "DiffusionRMFluxScorer"),
+    "diffusion-rm-sd3": ("diffusion_rm", "DiffusionRMSD3Scorer"),
 }
 
 
 class MultiScorer(Scorer):
 
-    def __init__(self, scorers: Dict[str, float]) -> None:
+    def __init__(self, scorers: Dict[str, float], scorer_configs: Dict[str, Dict] = None) -> None:
         self.score_fn = dict()
         self.scorers = scorers
+        self.scorer_configs = scorer_configs or {}
         self.init_scorer_cls()
 
     def init_scorer_cls(self):
         for score_name in self.scorers.keys():
-            module, cls = AVAILABLE_SCORERS[score_name]
-            module = "flow_grpo.scorer." + module
-            module = importlib.import_module(module)
-            cls = getattr(module, cls)
-            self.score_fn[score_name] = cls()
+            if score_name in self.scorer_configs and isinstance(self.scorer_configs[score_name], Scorer):
+                self.score_fn[score_name] = self.scorer_configs[score_name]
+            else:
+                module, cls = AVAILABLE_SCORERS[score_name]
+                module = "flow_grpo.scorer." + module
+                module = importlib.import_module(module)
+                cls = getattr(module, cls)
+
+                if score_name in self.scorer_configs:
+                    scorer_config = self.scorer_configs[score_name]
+                    self.score_fn[score_name] = cls(**scorer_config)
+                else:
+                    self.score_fn[score_name] = cls()
 
     def __call__(
         self,
