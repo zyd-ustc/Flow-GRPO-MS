@@ -14,6 +14,7 @@ import torch
 from PIL import Image
 
 from .scorer import Scorer
+from .diffusion_rm_impl import DRMInferencer
 
 
 class DiffusionRMFluxScorer(Scorer):
@@ -54,12 +55,12 @@ class DiffusionRMFluxScorer(Scorer):
                 torch_dtype=torch.bfloat16,
             )
             self.pipeline.to(self.device)
+            if hasattr(self.pipeline, "vae"):
+                self.pipeline.vae.to(self.device, dtype=torch.float32)
         else:
             self.pipeline = pipeline
 
         print(f"Loading Diffusion-RM from {checkpoint_path}...")
-        from diffusion_rm import DRMInferencer
-
         self.drm = DRMInferencer(
             pipeline=self.pipeline,
             config_path=config_path,
@@ -164,48 +165,54 @@ class DiffusionRMFluxScorer(Scorer):
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
-                    self.device, dtype=torch.bfloat16
+                    self.device, dtype=torch.float32
                 )
 
                 latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
+                # Match diffusers latent convention when applicable
+                scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
+                shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
+                if scaling_factor is not None and shift_factor is not None:
+                    latents = (latents - shift_factor) * scaling_factor
+                elif scaling_factor is not None:
+                    latents = latents * scaling_factor
                 latents_list.append(latents)
 
         latents = torch.cat(latents_list, dim=0)
         return latents
 
     def _encode_prompts(self, prompts: List[str]) -> Dict[str, torch.Tensor]:
-        from diffusion_rm.models.sd3_rm import encode_prompt
+        from .diffusion_rm_impl.models.flux_rm import encode_prompt
 
         with torch.no_grad():
-            prompt_embeds, pooled_prompt_embeds = encode_prompt(
+            prompt_embeds, pooled_prompt_embeds, text_ids = encode_prompt(
                 text_encoders=[
                     self.pipeline.text_encoder,
                     self.pipeline.text_encoder_2,
-                    self.pipeline.text_encoder_3,
                 ],
                 tokenizers=[
                     self.pipeline.tokenizer,
                     self.pipeline.tokenizer_2,
-                    self.pipeline.tokenizer_3,
                 ],
                 prompts=prompts,
                 max_sequence_length=128,
+                device=self.device,
             )
 
             prompt_embeds = prompt_embeds.to(self.device)
             pooled_prompt_embeds = pooled_prompt_embeds.to(self.device)
+            text_ids = text_ids.to(self.device)
 
         return {
             "encoder_hidden_states": prompt_embeds,
             "pooled_projections": pooled_prompt_embeds,
+            "txt_ids": text_ids,
         }
 
 
 class DiffusionRMSD3Scorer(Scorer):
     """
     SD3-based Diffusion Reward Model Scorer
-
-    与 DiffusionRMFluxScorer 类似，但使用 SD3 pipeline。
     """
 
     def __init__(
@@ -231,12 +238,13 @@ class DiffusionRMSD3Scorer(Scorer):
                 torch_dtype=torch.bfloat16,
             )
             self.pipeline.to(self.device)
+            # VAE encode is more stable in fp32
+            if hasattr(self.pipeline, "vae"):
+                self.pipeline.vae.to(self.device, dtype=torch.float32)
         else:
             self.pipeline = pipeline
 
         print(f"Loading Diffusion-RM from {checkpoint_path}...")
-        from diffusion_rm import DRMInferencer
-
         self.drm = DRMInferencer(
             pipeline=self.pipeline,
             config_path=config_path,
@@ -320,17 +328,23 @@ class DiffusionRMSD3Scorer(Scorer):
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
-                    self.device, dtype=torch.bfloat16
+                    self.device, dtype=torch.float32
                 )
 
                 latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
+                scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
+                shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
+                if scaling_factor is not None and shift_factor is not None:
+                    latents = (latents - shift_factor) * scaling_factor
+                elif scaling_factor is not None:
+                    latents = latents * scaling_factor
                 latents_list.append(latents)
 
         latents = torch.cat(latents_list, dim=0)
         return latents
 
     def _encode_prompts(self, prompts: List[str]) -> Dict[str, torch.Tensor]:
-        from diffusion_rm.models.sd3_rm import encode_prompt
+        from .diffusion_rm_impl.models.sd3_rm import encode_prompt
 
         with torch.no_grad():
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
@@ -346,6 +360,7 @@ class DiffusionRMSD3Scorer(Scorer):
                 ],
                 prompts=prompts,
                 max_sequence_length=128,
+                device=self.device,
             )
 
             prompt_embeds = prompt_embeds.to(self.device)
