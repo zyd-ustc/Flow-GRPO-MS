@@ -162,7 +162,6 @@ class SD3Backbone(nn.Cell):
         unpatched: bool = False,
         **kwargs,
     ) -> ms.Tensor:
-        # NOTE: `unpatched`/kwargs are kept for compatibility with upstream callsites.
         _ = unpatched
         _ = kwargs
 

@@ -9,8 +9,8 @@ import os
 from typing import Dict, List, Optional, Union
 
 import mindspore as ms
+from mindspore import mint
 import numpy as np
-import torch
 from PIL import Image
 
 from .scorer import Scorer
@@ -20,16 +20,6 @@ from .diffusion_rm_impl import DRMInferencer
 class DiffusionRMFluxScorer(Scorer):
     """
     FLUX-based Diffusion Reward Model Scorer
-
-    使用 PyTorch 实现的 Diffusion-RM 进行推理评分。
-
-    Args:
-        checkpoint_path: Diffusion-RM checkpoint 目录路径
-        config_path: Diffusion-RM 配置文件路径
-        pipeline: Diffusers FluxPipeline (可选，如果不提供会自动加载)
-        pipeline_path: FluxPipeline 模型路径 (如 "black-forest-labs/FLUX.1-dev")
-        device: 计算设备 ("cuda" 或 "cpu")
-        u: 噪声水平，默认 0.9
     """
 
     def __init__(
@@ -38,12 +28,10 @@ class DiffusionRMFluxScorer(Scorer):
         config_path: str,
         pipeline=None,
         pipeline_path: str = "black-forest-labs/FLUX.1-dev",
-        device: str = "cuda",
         u: float = 0.9,
     ):
         super().__init__()
 
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.u = u
 
         if pipeline is None:
@@ -52,11 +40,8 @@ class DiffusionRMFluxScorer(Scorer):
 
             self.pipeline = FluxPipeline.from_pretrained(
                 pipeline_path,
-                torch_dtype=torch.bfloat16,
+                dtype=ms.bfloat16,
             )
-            self.pipeline.to(self.device)
-            if hasattr(self.pipeline, "vae"):
-                self.pipeline.vae.to(self.device, dtype=torch.float32)
         else:
             self.pipeline = pipeline
 
@@ -65,8 +50,7 @@ class DiffusionRMFluxScorer(Scorer):
             pipeline=self.pipeline,
             config_path=config_path,
             model_path=checkpoint_path,
-            device=str(self.device),
-            model_dtype=torch.bfloat16,
+            model_dtype=ms.bfloat16,
         )
 
         print("Diffusion-RM loaded successfully!")
@@ -76,16 +60,6 @@ class DiffusionRMFluxScorer(Scorer):
         images: Union[List[Image.Image], np.ndarray, ms.Tensor],
         prompts: Optional[List[str]] = None,
     ) -> List[float]:
-        """
-        评分图像
-
-        Args:
-            images: 图像 (PIL Image, numpy array, 或 MindSpore tensor)
-            prompts: 提示词列表
-
-        Returns:
-            scores: 评分列表
-        """
         pil_images = self._to_pil_images(images)
         latents = self._encode_images_to_latents(pil_images)
 
@@ -99,7 +73,7 @@ class DiffusionRMFluxScorer(Scorer):
             u=self.u,
         )
 
-        scores = (rewards.float() / 5.0).cpu().numpy().tolist()
+        scores = (rewards.float() / 5.0).asnumpy().tolist()
         return scores
 
     def reward(
@@ -108,23 +82,12 @@ class DiffusionRMFluxScorer(Scorer):
         text_conds: Dict[str, ms.Tensor],
         u: Optional[float] = None,
     ) -> ms.Tensor:
-        """
-        直接对 latents 评分
-
-        Args:
-            latents: 潜空间表示 [B, C, H, W] (MindSpore tensor)
-            text_conds: 文本条件，包含 encoder_hidden_states, pooled_projections
-            u: 噪声水平 (可选，默认使用初始化时的 u)
-
-        Returns:
-            rewards: reward 分数 [B, 1] (MindSpore tensor)
-        """
         if u is None:
             u = self.u
 
-        latents_pt = torch.from_numpy(latents.asnumpy()).to(self.device)
+        latents_pt = ms.Tensor(latents.asnumpy())
         text_conds_pt = {
-            k: torch.from_numpy(v.asnumpy()).to(self.device)
+            k: ms.Tensor(v.asnumpy())
             for k, v in text_conds.items()
         }
 
@@ -134,7 +97,7 @@ class DiffusionRMFluxScorer(Scorer):
             u=u,
         )
 
-        return ms.Tensor(rewards_pt.cpu().numpy())
+        return ms.Tensor(rewards_pt.asnumpy())
 
     def _to_pil_images(self, images: Union[List[Image.Image], np.ndarray, ms.Tensor]) -> List[Image.Image]:
         if isinstance(images, list) and all(isinstance(img, Image.Image) for img in images):
@@ -157,15 +120,15 @@ class DiffusionRMFluxScorer(Scorer):
 
         return images
 
-    def _encode_images_to_latents(self, images: List[Image.Image]) -> torch.Tensor:
+    def _encode_images_to_latents(self, images: List[Image.Image]) -> ms.Tensor:
         self.pipeline.vae.eval()
 
         latents_list = []
-        with torch.no_grad():
+        with ms.no_grad():
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
-                    self.device, dtype=torch.float32
+                    dtype=ms.float32
                 )
 
                 latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
@@ -178,13 +141,13 @@ class DiffusionRMFluxScorer(Scorer):
                     latents = latents * scaling_factor
                 latents_list.append(latents)
 
-        latents = torch.cat(latents_list, dim=0)
+        latents = mint.cat(latents_list, dim=0)
         return latents
 
-    def _encode_prompts(self, prompts: List[str]) -> Dict[str, torch.Tensor]:
+    def _encode_prompts(self, prompts: List[str]) -> Dict[str, ms.Tensor]:
         from .diffusion_rm_impl.models.flux_rm import encode_prompt
 
-        with torch.no_grad():
+        with ms.no_grad():
             prompt_embeds, pooled_prompt_embeds, text_ids = encode_prompt(
                 text_encoders=[
                     self.pipeline.text_encoder,
@@ -196,12 +159,11 @@ class DiffusionRMFluxScorer(Scorer):
                 ],
                 prompts=prompts,
                 max_sequence_length=128,
-                device=self.device,
             )
 
-            prompt_embeds = prompt_embeds.to(self.device)
-            pooled_prompt_embeds = pooled_prompt_embeds.to(self.device)
-            text_ids = text_ids.to(self.device)
+            prompt_embeds = prompt_embeds.to(dtype=ms.float32)
+            pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=ms.float32)
+            text_ids = text_ids.to(dtype=ms.float32)
 
         return {
             "encoder_hidden_states": prompt_embeds,
@@ -221,12 +183,10 @@ class DiffusionRMSD3Scorer(Scorer):
         config_path: str,
         pipeline=None,
         pipeline_path: str = "stabilityai/stable-diffusion-3.5-medium",
-        device: str = "cuda",
         u: float = 0.9,
     ):
         super().__init__()
 
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.u = u
 
         if pipeline is None:
@@ -235,12 +195,11 @@ class DiffusionRMSD3Scorer(Scorer):
 
             self.pipeline = StableDiffusion3Pipeline.from_pretrained(
                 pipeline_path,
-                torch_dtype=torch.bfloat16,
+                dtype=ms.bfloat16,
             )
-            self.pipeline.to(self.device)
             # VAE encode is more stable in fp32
             if hasattr(self.pipeline, "vae"):
-                self.pipeline.vae.to(self.device, dtype=torch.float32)
+                self.pipeline.vae.to(dtype=ms.float32)
         else:
             self.pipeline = pipeline
 
@@ -249,8 +208,7 @@ class DiffusionRMSD3Scorer(Scorer):
             pipeline=self.pipeline,
             config_path=config_path,
             model_path=checkpoint_path,
-            device=str(self.device),
-            model_dtype=torch.bfloat16,
+            model_dtype=ms.bfloat16,
         )
 
         print("Diffusion-RM loaded successfully!")
@@ -273,7 +231,7 @@ class DiffusionRMSD3Scorer(Scorer):
             u=self.u,
         )
 
-        scores = (rewards.float() / 5.0).cpu().numpy().tolist()
+        scores = (rewards.float() / 5.0).asnumpy().tolist()
         return scores
 
     def reward(
@@ -285,9 +243,9 @@ class DiffusionRMSD3Scorer(Scorer):
         if u is None:
             u = self.u
 
-        latents_pt = torch.from_numpy(latents.asnumpy()).to(self.device)
+        latents_pt = ms.Tensor(latents.asnumpy())
         text_conds_pt = {
-            k: torch.from_numpy(v.asnumpy()).to(self.device)
+            k: ms.Tensor(v.asnumpy())
             for k, v in text_conds.items()
         }
 
@@ -297,7 +255,7 @@ class DiffusionRMSD3Scorer(Scorer):
             u=u,
         )
 
-        return ms.Tensor(rewards_pt.cpu().numpy())
+        return ms.Tensor(rewards_pt.asnumpy())
 
     def _to_pil_images(self, images: Union[List[Image.Image], np.ndarray, ms.Tensor]) -> List[Image.Image]:
         if isinstance(images, list) and all(isinstance(img, Image.Image) for img in images):
@@ -320,15 +278,15 @@ class DiffusionRMSD3Scorer(Scorer):
 
         return images
 
-    def _encode_images_to_latents(self, images: List[Image.Image]) -> torch.Tensor:
+    def _encode_images_to_latents(self, images: List[Image.Image]) -> ms.Tensor:
         self.pipeline.vae.eval()
 
         latents_list = []
-        with torch.no_grad():
+        with ms.no_grad():
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
-                    self.device, dtype=torch.float32
+                    dtype=ms.float32
                 )
 
                 latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
@@ -340,13 +298,13 @@ class DiffusionRMSD3Scorer(Scorer):
                     latents = latents * scaling_factor
                 latents_list.append(latents)
 
-        latents = torch.cat(latents_list, dim=0)
+        latents = mint.cat(latents_list, dim=0)
         return latents
 
-    def _encode_prompts(self, prompts: List[str]) -> Dict[str, torch.Tensor]:
+    def _encode_prompts(self, prompts: List[str]) -> Dict[str, ms.Tensor]:
         from .diffusion_rm_impl.models.sd3_rm import encode_prompt
 
-        with torch.no_grad():
+        with ms.no_grad():
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 text_encoders=[
                     self.pipeline.text_encoder,
@@ -360,11 +318,10 @@ class DiffusionRMSD3Scorer(Scorer):
                 ],
                 prompts=prompts,
                 max_sequence_length=128,
-                device=self.device,
             )
 
-            prompt_embeds = prompt_embeds.to(self.device)
-            pooled_prompt_embeds = pooled_prompt_embeds.to(self.device)
+            prompt_embeds = prompt_embeds.to(dtype=ms.float32)
+            pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=ms.float32)
 
         return {
             "encoder_hidden_states": prompt_embeds,
