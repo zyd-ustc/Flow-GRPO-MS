@@ -10,7 +10,7 @@ import mindspore.mint.distributed as dist
 import mindspore.nn as nn
 import numpy as np
 from mindone.diffusers import FlowMatchEulerDiscreteScheduler
-from mindone.diffusers._peft import LoraConfig, PeftModel, get_peft_model
+from mindone.peft import LoraConfig, PeftModel, get_peft_model
 from mindspore.dataset import DictIterator, GeneratorDataset
 from tqdm import tqdm, trange
 
