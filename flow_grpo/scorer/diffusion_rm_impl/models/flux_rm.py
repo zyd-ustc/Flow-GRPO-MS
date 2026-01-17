@@ -206,8 +206,8 @@ class FLUXRewardModel(nn.Cell):
         text_encoder_1 = pipeline.text_encoder
         text_encoder_2 = pipeline.text_encoder_2
 
-        text_encoder_1.requires_grad(False)
-        text_encoder_2.requires_grad(False)
+        text_encoder_1.requires_grad = False
+        text_encoder_2.requires_grad = False
 
         self.text_encoders = [text_encoder_1, text_encoder_2]
         self.tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2]
