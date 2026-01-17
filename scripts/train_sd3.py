@@ -308,7 +308,7 @@ def train(args: argparse.Namespace):
                 "u": args.diffusion_rm_u,
             }
             # 推荐 SD3 场景复用训练时 pipeline（节省显存/内存）；同时用 shallow copy 避免改动训练 scheduler
-            if reward_name == "diffusion-rm-sd3" and args.diffusion_rm_use_training_pipeline:
+            if reward_name == "diffusion-rm-sd3":
                 rm_pipeline = copy.copy(pipeline)
                 rm_pipeline.scheduler = original_scheduler
                 cfg["pipeline"] = rm_pipeline
