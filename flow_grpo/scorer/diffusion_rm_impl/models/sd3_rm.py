@@ -198,9 +198,9 @@ class SD3RewardModel(nn.Cell):
         text_encoder_2 = pipeline.text_encoder_2
         text_encoder_3 = pipeline.text_encoder_3
 
-        text_encoder_1.requires_grad_(False)
-        text_encoder_2.requires_grad_(False)
-        text_encoder_3.requires_grad_(False)
+        text_encoder_1.requires_grad(False)
+        text_encoder_2.requires_grad(False)
+        text_encoder_3.requires_grad(False)
 
         self.text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
         self.tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
