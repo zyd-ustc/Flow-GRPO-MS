@@ -148,7 +148,7 @@ class FLUXBackbone(nn.Cell):
         self.x_embedder = transformer.x_embedder
 
         self.transformer_blocks = nn.CellList(
-            transformer.transformer_blocks[:config_model.num_transformer_layers]
+            list(transformer.transformer_blocks[:config_model.num_transformer_layers])
         )
 
         self.visual_head_idx = config_model.visual_head_idx
