@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import copy
 from collections import defaultdict
 from typing import Optional
 
@@ -281,8 +282,16 @@ def train(args: argparse.Namespace):
     )
 
     # prepare prompt and reward fn
-    scorers_weight = [1 / len(args.reward)] * len(args.reward)
-    scorers = dict(zip(args.reward, scorers_weight))
+    if args.reward_weights is not None:
+        if len(args.reward_weights) != len(args.reward):
+            raise ValueError(
+                f"--reward-weights length ({len(args.reward_weights)}) must match "
+                f"--reward length ({len(args.reward)})."
+            )
+        weights = list(map(float, args.reward_weights))
+    else:
+        weights = [1 / len(args.reward)] * len(args.reward)
+    scorers = dict(zip(args.reward, weights))
     logger.info("Using scorers: %s", scorers)
     
     # prepare scorer configs for Diffusion-RM
@@ -293,12 +302,20 @@ def train(args: argparse.Namespace):
                 raise ValueError(
                     f"diffusion_rm_checkpoint_path and diffusion_rm_config_path must be provided when using {reward_name}"
                 )
-            scorer_configs[reward_name] = {
+            cfg = {
                 "checkpoint_path": args.diffusion_rm_checkpoint_path,
                 "config_path": args.diffusion_rm_config_path,
-                "device": args.diffusion_rm_device,
                 "u": args.diffusion_rm_u,
             }
+            # 推荐 SD3 场景复用训练时 pipeline（节省显存/内存）；同时用 shallow copy 避免改动训练 scheduler
+            if reward_name == "diffusion-rm-sd3" and args.diffusion_rm_use_training_pipeline:
+                rm_pipeline = copy.copy(pipeline)
+                rm_pipeline.scheduler = original_scheduler
+                cfg["pipeline"] = rm_pipeline
+                # pipeline 已提供则无需 pipeline_path
+            else:
+                cfg["pipeline_path"] = args.diffusion_rm_pipeline_path or args.model
+            scorer_configs[reward_name] = cfg
     
     reward_fn = MultiScorer(scorers, scorer_configs)
 
@@ -366,7 +383,7 @@ def train(args: argparse.Namespace):
     )
 
     logger.info(f"Num Epochs = {args.num_epochs}")
-    logger.info(f"Train batch size per device = {args.train_batch_size}")
+    logger.info(f"Train batch size  = {args.train_batch_size}")
     logger.info(f"Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"Total number of samples per epoch = {samples_per_epoch}")
     logger.info(
@@ -405,6 +422,8 @@ def train(args: argparse.Namespace):
     for epoch in range(first_epoch, args.num_epochs):
         if epoch % args.eval_freq == 0 and is_main_process:
             outdir = os.path.join(output_dir, "visual", f"epoch_{epoch}")
+            # NOTE: DictIterator 会被 consume；每次 eval 都需要重新创建
+            test_iter = test_dataloader.create_dict_iterator(output_numpy=True)
             evaluate(
                 pipeline,
                 reward_fn,
@@ -698,6 +717,13 @@ def main():
         help="Reward function(s) to use for training",
     )
     group.add_argument(
+        "--reward-weights",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Optional weights for each reward in --reward (must match length). Defaults to uniform weights.",
+    )
+    group.add_argument(
         "--resolution",
         default=512,
         type=int,
@@ -911,10 +937,16 @@ def main():
         help="Noise level u for Diffusion-RM (default: 0.9)",
     )
     group.add_argument(
-        "--diffusion-rm-device",
+        "--diffusion-rm-pipeline-path",
         type=str,
-        default="cuda",
-        help="Device for Diffusion-RM (default: cuda)",
+        default=None,
+        help="Pipeline path for Diffusion-RM scorer when not sharing training pipeline. Default: use --model.",
+    )
+    group.add_argument(
+        "--diffusion-rm-use-training-pipeline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="For diffusion-rm-sd3, reuse the training pipeline to save memory (scheduler will use the original pretrained scheduler).",
     )
 
     args = parser.parse_args()

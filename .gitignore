@@ -185,3 +185,6 @@ fusion_result.json
 kernel_meta/
 output/
 rank_*/
+
+# Local model weights / checkpoints (do not commit)
+models/checkpoints/
