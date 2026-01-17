@@ -942,12 +942,6 @@ def main():
         default=None,
         help="Pipeline path for Diffusion-RM scorer when not sharing training pipeline. Default: use --model.",
     )
-    group.add_argument(
-        "--diffusion-rm-use-training-pipeline",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="For diffusion-rm-sd3, reuse the training pipeline to save memory (scheduler will use the original pretrained scheduler).",
-    )
 
     args = parser.parse_args()
     train(args)
