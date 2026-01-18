@@ -48,7 +48,7 @@ def _encode_prompt_with_t5(
     else:
         dtype = text_encoder.dtype
 
-    prompt_embeds = prompt_embeds.to(dtype=dtype)
+    # prompt_embeds = prompt_embeds.to(dtype=dtype)
 
     _, seq_len, _ = prompt_embeds.shape
 
@@ -93,7 +93,7 @@ def _encode_prompt_with_clip(
 
     # Use pooled output of CLIPTextModel
     prompt_embeds = prompt_embeds.pooler_output
-    prompt_embeds = prompt_embeds.to(dtype=dtype)
+    # prompt_embeds = prompt_embeds.to(dtype=dtype)
     # duplicate text embeddings for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, -1)
@@ -133,7 +133,7 @@ def encode_prompt(
         text_input_ids=text_input_ids_list[-1] if text_input_ids_list else None,
     )
 
-    text_ids = mint.zeros(prompt_embeds.shape[1], 3).to(dtype=dtype)
+    text_ids = mint.zeros(prompt_embeds.shape[1], 3)
 
     return prompt_embeds, pooled_prompt_embeds, text_ids
 
@@ -337,7 +337,7 @@ class FLUXRewardModel(nn.Cell):
             width=w // 2,
         )
 
-        guidance = ms.Tensor([3.5]).to(dtype=latents.dtype)
+        guidance = ms.Tensor([3.5])
 
         temb, hidden_states_list, encoder_hidden_states_list = self.backbone(
             hidden_states=latents,

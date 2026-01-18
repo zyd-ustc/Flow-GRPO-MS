@@ -44,7 +44,7 @@ def _encode_prompt_with_t5(
     prompt_embeds = text_encoder(text_input_ids)[0]
 
     dtype = text_encoder.dtype
-    prompt_embeds = prompt_embeds.to(dtype=dtype)
+    # prompt_embeds = prompt_embeds.to(dtype=dtype)
 
     _, seq_len, _ = prompt_embeds.shape
 
@@ -83,7 +83,7 @@ def _encode_prompt_with_clip(
 
     pooled_prompt_embeds = prompt_embeds[0]
     prompt_embeds = prompt_embeds.hidden_states[-2]
-    prompt_embeds = prompt_embeds.to(dtype=text_encoder.dtype)
+    # prompt_embeds = prompt_embeds.to(dtype=text_encoder.dtype)
 
     _, seq_len, _ = prompt_embeds.shape
     # duplicate text embeddings for each generation per prompt, using mps friendly method
@@ -243,7 +243,7 @@ class SD3RewardModel(nn.Cell):
                 exclude_modules=exclude_modules,
             )
             self.backbone = get_peft_model(self.backbone, lora_config)
-            self.backbone.to(dtype=dtype)
+            # self.backbone.to(dtype=dtype)
 
         # Get transformer output dimension
         backbone_dim = pipeline.transformer.inner_dim
@@ -258,15 +258,15 @@ class SD3RewardModel(nn.Cell):
             **config_model.reward_head
         )
 
-        self.reward_head = self.reward_head.to(dtype=dtype)
+        # self.reward_head = self.reward_head.to(dtype=dtype)
 
     def encode_prompt(self, prompts):
         with ms.no_grad():
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 self.text_encoders, self.tokenizers, prompts, max_sequence_length=128
             )
-            prompt_embeds = prompt_embeds.to(dtype=self.text_encoders[0].dtype)
-            pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=self.text_encoders[0].dtype)
+            # prompt_embeds = prompt_embeds.to(dtype=self.text_encoders[0].dtype)
+            # pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=self.text_encoders[0].dtype)
 
         return {
             "encoder_hidden_states": prompt_embeds,
