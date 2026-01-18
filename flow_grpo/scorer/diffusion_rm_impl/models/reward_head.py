@@ -123,7 +123,7 @@ class Conv2DHead(nn.Cell):
             self.norm2 = None
 
         self.conv2 = nn.SequentialCell(
-            nn.Conv2d(width, width, kernel_size=3, padding=1),
+            nn.Conv2d(width, width, kernel_size=3, padding=1, pad_mode='pad'),
             nn.GroupNorm(num_groups=min(32, width), num_channels=width),
             nn.SiLU(),
         )
