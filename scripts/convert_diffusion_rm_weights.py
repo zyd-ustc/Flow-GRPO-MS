@@ -22,6 +22,7 @@
 用法示例：
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000"
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000" --strip-prefix reward_head.
+  python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000" --rm-head-add-prefix reward_head.
 """
 
 from __future__ import annotations
@@ -71,13 +72,26 @@ def _strip_prefixes(name: str, prefixes: list[str]) -> str:
     return name
 
 
-def _rewrite_state_dict_keys(state_dict: Dict[str, Any], strip_prefixes: list[str]) -> Dict[str, Any]:
-    if not strip_prefixes:
+def _add_prefixes(name: str, prefixes: list[str]) -> str:
+    # Apply in order; avoid double-adding if already present.
+    for p in prefixes:
+        if p and not name.startswith(p):
+            name = p + name
+    return name
+
+
+def _rewrite_state_dict_keys(
+    state_dict: Dict[str, Any],
+    strip_prefixes: list[str],
+    add_prefixes: list[str],
+) -> Dict[str, Any]:
+    if not strip_prefixes and not add_prefixes:
         return state_dict
     out: Dict[str, Any] = {}
     collisions = []
     for k, v in state_dict.items():
         nk = _strip_prefixes(k, strip_prefixes)
+        nk = _add_prefixes(nk, add_prefixes)
         if nk in out and nk != k:
             collisions.append((k, nk))
             # keep the first occurrence
@@ -96,6 +110,7 @@ def convert_pt_to_ckpt(
     overwrite: bool = False,
     bf16_to_fp16: bool = True,
     strip_prefixes: list[str] | None = None,
+    add_prefixes: list[str] | None = None,
 ):
     import torch  # pylint: disable=import-error
 
@@ -105,7 +120,7 @@ def convert_pt_to_ckpt(
 
     obj = torch.load(pt_path, map_location="cpu")
     state_dict = _unwrap_state_dict(obj)
-    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [])
+    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [], add_prefixes or [])
 
     ms_items = []
     bf16_seen = False
@@ -134,6 +149,7 @@ def convert_safetensors_to_ckpt(
     overwrite: bool = False,
     bf16_to_fp16: bool = True,
     strip_prefixes: list[str] | None = None,
+    add_prefixes: list[str] | None = None,
 ):
     if os.path.exists(ckpt_path) and not overwrite:
         print(f"[skip] {ckpt_path} already exists")
@@ -142,7 +158,7 @@ def convert_safetensors_to_ckpt(
     from safetensors.torch import load_file  # pylint: disable=import-error
 
     state_dict = load_file(st_path)
-    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [])
+    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [], add_prefixes or [])
     ms_items = []
     bf16_seen = False
     for name, tensor in state_dict.items():
@@ -175,11 +191,26 @@ def main():
         help="Strip prefix from state_dict keys before saving ckpt. "
         "Can be specified multiple times. Example: --strip-prefix reward_head.",
     )
+    parser.add_argument(
+        "--add-prefix",
+        action="append",
+        default=[],
+        help="Add prefix to state_dict keys before saving ckpt. "
+        "Can be specified multiple times. Example: --add-prefix reward_head.",
+    )
+    parser.add_argument(
+        "--rm-head-add-prefix",
+        type=str,
+        default="",
+        help="Only add prefix to rm_head.pt when converting (e.g. reward_head.). Overrides --add-prefix for rm_head.",
+    )
     args = parser.parse_args()
 
     ckpt_dir = args.checkpoint_dir
     bf16_to_fp16 = not args.keep_bf16
     strip_prefixes = list(args.strip_prefix)
+    add_prefixes = list(args.add_prefix)
+    rm_head_add_prefix = str(args.rm_head_add_prefix or "")
 
     if not os.path.isdir(ckpt_dir):
         raise FileNotFoundError(f"checkpoint_dir not found: {ckpt_dir}")
@@ -187,12 +218,14 @@ def main():
     # rm_head
     rm_head_pt = os.path.join(ckpt_dir, "rm_head.pt")
     if os.path.exists(rm_head_pt):
+        rm_add = [rm_head_add_prefix] if rm_head_add_prefix else add_prefixes
         convert_pt_to_ckpt(
             rm_head_pt,
             os.path.join(ckpt_dir, "rm_head.ckpt"),
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
+            add_prefixes=rm_add,
         )
 
     # full_model
@@ -204,6 +237,7 @@ def main():
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
+            add_prefixes=add_prefixes,
         )
 
     # backbone_lora adapter
@@ -215,6 +249,7 @@ def main():
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
+            add_prefixes=add_prefixes,
         )
 
     print("[done] conversion finished")
