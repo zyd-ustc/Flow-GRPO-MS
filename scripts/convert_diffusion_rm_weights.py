@@ -21,6 +21,7 @@
 
 用法示例：
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000"
+  python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000" --strip-prefix reward_head.
 """
 
 from __future__ import annotations
@@ -63,7 +64,39 @@ def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True) -> ms.Tensor:
     return ms.Tensor(t.detach().cpu().numpy())
 
 
-def convert_pt_to_ckpt(pt_path: str, ckpt_path: str, overwrite: bool = False, bf16_to_fp16: bool = True):
+def _strip_prefixes(name: str, prefixes: list[str]) -> str:
+    for p in prefixes:
+        if name.startswith(p):
+            name = name[len(p) :]
+    return name
+
+
+def _rewrite_state_dict_keys(state_dict: Dict[str, Any], strip_prefixes: list[str]) -> Dict[str, Any]:
+    if not strip_prefixes:
+        return state_dict
+    out: Dict[str, Any] = {}
+    collisions = []
+    for k, v in state_dict.items():
+        nk = _strip_prefixes(k, strip_prefixes)
+        if nk in out and nk != k:
+            collisions.append((k, nk))
+            # keep the first occurrence
+            continue
+        out[nk] = v
+    if collisions:
+        print(f"[warn] key collisions after stripping prefixes: {len(collisions)} (kept first occurrence)")
+        for old, new in collisions[:20]:
+            print(f"  - {old} -> {new}")
+    return out
+
+
+def convert_pt_to_ckpt(
+    pt_path: str,
+    ckpt_path: str,
+    overwrite: bool = False,
+    bf16_to_fp16: bool = True,
+    strip_prefixes: list[str] | None = None,
+):
     import torch  # pylint: disable=import-error
 
     if os.path.exists(ckpt_path) and not overwrite:
@@ -72,6 +105,7 @@ def convert_pt_to_ckpt(pt_path: str, ckpt_path: str, overwrite: bool = False, bf
 
     obj = torch.load(pt_path, map_location="cpu")
     state_dict = _unwrap_state_dict(obj)
+    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [])
 
     ms_items = []
     bf16_seen = False
@@ -94,7 +128,13 @@ def convert_pt_to_ckpt(pt_path: str, ckpt_path: str, overwrite: bool = False, bf
     print(f"[ok] {pt_path} -> {ckpt_path} ({len(ms_items)} tensors)")
 
 
-def convert_safetensors_to_ckpt(st_path: str, ckpt_path: str, overwrite: bool = False, bf16_to_fp16: bool = True):
+def convert_safetensors_to_ckpt(
+    st_path: str,
+    ckpt_path: str,
+    overwrite: bool = False,
+    bf16_to_fp16: bool = True,
+    strip_prefixes: list[str] | None = None,
+):
     if os.path.exists(ckpt_path) and not overwrite:
         print(f"[skip] {ckpt_path} already exists")
         return
@@ -102,6 +142,7 @@ def convert_safetensors_to_ckpt(st_path: str, ckpt_path: str, overwrite: bool = 
     from safetensors.torch import load_file  # pylint: disable=import-error
 
     state_dict = load_file(st_path)
+    state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [])
     ms_items = []
     bf16_seen = False
     for name, tensor in state_dict.items():
@@ -127,10 +168,18 @@ def main():
     parser.add_argument("--checkpoint_dir", type=str, required=True, help="Diffusion-RM 的 step_xxx checkpoint 目录")
     parser.add_argument("--overwrite", action="store_true", help="覆盖已存在的 .ckpt")
     parser.add_argument("--keep_bf16", action="store_true", help="不将 bf16 转 fp16（若环境支持 bf16）")
+    parser.add_argument(
+        "--strip-prefix",
+        action="append",
+        default=[],
+        help="Strip prefix from state_dict keys before saving ckpt. "
+        "Can be specified multiple times. Example: --strip-prefix reward_head.",
+    )
     args = parser.parse_args()
 
     ckpt_dir = args.checkpoint_dir
     bf16_to_fp16 = not args.keep_bf16
+    strip_prefixes = list(args.strip_prefix)
 
     if not os.path.isdir(ckpt_dir):
         raise FileNotFoundError(f"checkpoint_dir not found: {ckpt_dir}")
@@ -143,6 +192,7 @@ def main():
             os.path.join(ckpt_dir, "rm_head.ckpt"),
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
+            strip_prefixes=strip_prefixes,
         )
 
     # full_model
@@ -153,6 +203,7 @@ def main():
             os.path.join(ckpt_dir, "full_model.ckpt"),
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
+            strip_prefixes=strip_prefixes,
         )
 
     # backbone_lora adapter
@@ -163,6 +214,7 @@ def main():
             os.path.join(ckpt_dir, "backbone_lora", "adapter_model.ckpt"),
             overwrite=args.overwrite,
             bf16_to_fp16=bf16_to_fp16,
+            strip_prefixes=strip_prefixes,
         )
 
     print("[done] conversion finished")
