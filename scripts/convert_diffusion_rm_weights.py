@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import mindspore as ms
 
@@ -58,7 +58,25 @@ def _unwrap_state_dict(obj: Any) -> Dict[str, Any]:
     raise ValueError("Unsupported checkpoint object format; cannot unwrap to state_dict.")
 
 
-def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True, cast_fp16: bool = False) -> ms.Tensor:
+def _to_ms_dtype(name: str) -> Optional[ms.dtype]:
+    name = (name or "").lower()
+    if name in ("", "keep", "none"):
+        return None
+    if name in ("fp16", "float16"):
+        return ms.float16
+    if name in ("fp32", "float32"):
+        return ms.float32
+    if name in ("bf16", "bfloat16"):
+        return ms.bfloat16
+    raise ValueError(f"Unsupported dtype name: {name}")
+
+
+def _torch_tensor_to_ms(
+    t,
+    bf16_to_fp16: bool = True,
+    cast_fp16: bool = False,
+    target_ms_dtype: Optional[ms.dtype] = None,
+) -> ms.Tensor:
     # 延迟 import torch，避免推理侧引入依赖
     import torch  # pylint: disable=import-error
 
@@ -71,8 +89,17 @@ def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True, cast_fp16: bool = False) -
         # Force all floating tensors to fp16 for MindSpore ckpt.
         t = t.to(torch.float16)
     elif bf16_to_fp16 and t.dtype == torch.bfloat16:
+        # torch bf16 -> numpy is not reliable; go through fp16 then cast on MindSpore side if needed
         t = t.to(torch.float16)
-    return ms.Tensor(t.detach().cpu().numpy())
+
+    out = ms.Tensor(t.detach().cpu().numpy())
+    if target_ms_dtype is not None and out.dtype != target_ms_dtype and out.dtype in (
+        ms.float16,
+        ms.float32,
+        ms.bfloat16,
+    ):
+        out = out.astype(target_ms_dtype)
+    return out
 
 
 def _strip_prefixes(name: str, prefixes: list[str]) -> str:
@@ -158,6 +185,7 @@ def convert_pt_to_ckpt(
     strip_prefixes: list[str] | None = None,
     add_prefixes: list[str] | None = None,
     cast_fp16: bool = False,
+    target_dtype: str = "keep",
 ):
     import torch  # pylint: disable=import-error
 
@@ -171,6 +199,7 @@ def convert_pt_to_ckpt(
 
     ms_items = []
     bf16_seen = False
+    target_ms_dtype = _to_ms_dtype(target_dtype)
     for name, tensor in state_dict.items():
         if hasattr(tensor, "dtype"):
             try:
@@ -184,7 +213,10 @@ def convert_pt_to_ckpt(
             {
                 "name": name,
                 "data": _torch_tensor_to_ms(
-                    tensor, bf16_to_fp16=bf16_to_fp16, cast_fp16=cast_fp16
+                    tensor,
+                    bf16_to_fp16=bf16_to_fp16,
+                    cast_fp16=cast_fp16,
+                    target_ms_dtype=target_ms_dtype,
                 ),
             }
         )
@@ -208,6 +240,8 @@ def convert_safetensors_to_ckpt(
     lora_backbone_prefix: str = "backbone.",
     lora_adapter_name: str = "default",
     cast_fp16: bool = False,
+    default_target_dtype: str = "keep",
+    lora_target_dtype: str = "keep",
 ):
     if os.path.exists(ckpt_path) and not overwrite:
         print(f"[skip] {ckpt_path} already exists")
@@ -225,6 +259,8 @@ def convert_safetensors_to_ckpt(
         )
     ms_items = []
     bf16_seen = False
+    default_ms_dtype = _to_ms_dtype(default_target_dtype)
+    lora_ms_dtype = _to_ms_dtype(lora_target_dtype)
     for name, tensor in state_dict.items():
         try:
             import torch as _torch  # pylint: disable=import-error
@@ -237,7 +273,10 @@ def convert_safetensors_to_ckpt(
             {
                 "name": name,
                 "data": _torch_tensor_to_ms(
-                    tensor, bf16_to_fp16=bf16_to_fp16, cast_fp16=cast_fp16
+                    tensor,
+                    bf16_to_fp16=bf16_to_fp16,
+                    cast_fp16=cast_fp16,
+                    target_ms_dtype=(lora_ms_dtype if (lora_adapter and ".lora_" in str(name)) else default_ms_dtype),
                 ),
             }
         )
@@ -259,6 +298,27 @@ def main():
         "--cast-fp16",
         action="store_true",
         help="将所有浮点权重统一转换为 float16 再保存为 MindSpore ckpt（会覆盖 fp32/bf16 等）。",
+    )
+    parser.add_argument(
+        "--rm-head-dtype",
+        type=str,
+        default="fp32",
+        choices=["keep", "fp16", "fp32", "bf16"],
+        help="Target dtype for rm_head.ckpt tensors. Default: fp32 (matches common MindSpore reward_head params).",
+    )
+    parser.add_argument(
+        "--adapter-dtype",
+        type=str,
+        default="keep",
+        choices=["keep", "fp16", "fp32", "bf16"],
+        help="Default target dtype for LoRA adapter ckpt tensors. Default: keep (preserve original).",
+    )
+    parser.add_argument(
+        "--adapter-lora-dtype",
+        type=str,
+        default="keep",
+        choices=["keep", "fp16", "fp32", "bf16"],
+        help="Target dtype only for LoRA tensors (keys containing '.lora_') in adapter ckpt. Default: keep.",
     )
     parser.add_argument(
         "--strip-prefix",
@@ -288,6 +348,9 @@ def main():
     add_prefixes = list(args.add_prefix)
     rm_head_add_prefix = str(args.rm_head_add_prefix or "")
     cast_fp16 = bool(args.cast_fp16)
+    rm_head_dtype = str(args.rm_head_dtype)
+    adapter_dtype = str(args.adapter_dtype)
+    adapter_lora_dtype = str(args.adapter_lora_dtype)
 
     if not os.path.isdir(ckpt_dir):
         raise FileNotFoundError(f"checkpoint_dir not found: {ckpt_dir}")
@@ -304,6 +367,7 @@ def main():
             strip_prefixes=strip_prefixes,
             add_prefixes=rm_add,
             cast_fp16=cast_fp16,
+            target_dtype=rm_head_dtype,
         )
 
     # full_model
@@ -317,6 +381,7 @@ def main():
             strip_prefixes=strip_prefixes,
             add_prefixes=add_prefixes,
             cast_fp16=cast_fp16,
+            target_dtype="keep",
         )
 
     # backbone_lora adapter
@@ -333,6 +398,8 @@ def main():
             lora_backbone_prefix="backbone.",
             lora_adapter_name="default",
             cast_fp16=cast_fp16,
+            default_target_dtype=adapter_dtype,
+            lora_target_dtype=adapter_lora_dtype,
         )
 
     print("[done] conversion finished")
