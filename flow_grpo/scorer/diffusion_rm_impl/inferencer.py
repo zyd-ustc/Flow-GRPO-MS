@@ -73,7 +73,7 @@ class DRMInferencer:
         self.load_checkpoint(model_path)
 
     def reward(self, text_conds, latents: ms.Tensor, u: float = 0.9) -> ms.Tensor:
-        self.model.eval()
+        #self.model.eval()
 
         # switch to rm_lora if available
         ori_adapter = getattr(self.model.backbone, "active_adapter", None)
