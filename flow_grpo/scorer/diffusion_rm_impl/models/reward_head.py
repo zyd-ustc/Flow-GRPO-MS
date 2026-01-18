@@ -118,7 +118,7 @@ class Conv2DHead(nn.Cell):
         )
 
         if self.norm1 is not None:
-            self.norm2 = nn.LayerNorm(width, elementwise_affine=False)
+            self.norm2 = mint.nn.LayerNorm(width, elementwise_affine=False)
         else:
             self.norm2 = None
 
@@ -168,10 +168,10 @@ class TransformerHead(nn.Cell):
     """
     def __init__(self, d_model: int, n_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.0):
         super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
+        self.norm1 = mint.nn.LayerNorm(d_model)
         self.attn = ms.nn.MultiheadAttention(
             d_model, n_heads, dropout=dropout, batch_first=True)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm2 = mint.nn.LayerNorm(d_model)
         
         hidden = int(d_model * mlp_ratio)
         self.mlp = nn.SequentialCell(
