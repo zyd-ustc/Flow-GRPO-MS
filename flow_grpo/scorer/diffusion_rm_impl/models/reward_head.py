@@ -205,7 +205,8 @@ class RewardHead(nn.Cell):
         use_t_embed: bool = True,
     ):
         super().__init__()
-        assert conv_type in ['1d', '2d', 'transformer'], f'Unsupported conv_type: {conv_type}'
+        if conv_type not in ["1d", "2d", "transformer"]:
+            conv_type = "1d"
         self.conv_type = conv_type
         
         if width == -1:
@@ -223,8 +224,6 @@ class RewardHead(nn.Cell):
             self.visual_heads = nn.CellList([
                 TransformerHead(token_dim, n_heads=width // 64) for _ in range(n_visual_heads)
             ])
-        else:
-            raise ValueError(f'Unsupported conv_type: {conv_type}')
         
         if n_text_heads > 0:
             self.text_heads = nn.CellList([
@@ -254,8 +253,6 @@ class RewardHead(nn.Cell):
             h = h // p
             w = w // p
 
-        assert h * w == x.shape[1]
-
         x = x.reshape(shape=(x.shape[0], h, w, p, p, c)).contiguous()
         x = mint.einsum("nhwpqc->nchpwq", x)
         imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p)).contiguous()
@@ -264,7 +261,6 @@ class RewardHead(nn.Cell):
     def patchify(self, imgs):
         p = self.patch_size
         c = imgs.shape[1]
-        assert imgs.shape[2] % p == 0 and imgs.shape[3] % p == 0
         h = imgs.shape[2] // p
         w = imgs.shape[3] // p
         x = imgs.reshape(shape=(imgs.shape[0], c, h, p, w, p)).contiguous()

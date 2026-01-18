@@ -11,7 +11,6 @@ from typing import Optional
 from diffusers import DiffusionPipeline
 from transformers import AutoConfig
 from mindone.peft import LoraConfig, get_peft_model
-import warnings
 
 from .reward_head import RewardHeadV3
 

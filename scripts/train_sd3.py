@@ -18,7 +18,6 @@ from tqdm import tqdm, trange
 from flow_grpo.dataset import DistributedKRepeatSampler, TextPromptDataset
 from flow_grpo.ema import EMAModuleWrapper
 from flow_grpo.logging import get_logger
-from flow_grpo.misc import init_debug_pipeline
 from flow_grpo.optim import BF16AdamW
 from flow_grpo.scorer import AVAILABLE_SCORERS, MultiScorer
 from flow_grpo.stat_tracking import PerPromptStatTracker
@@ -146,24 +145,14 @@ def train(args: argparse.Namespace):
         args.run_name += "_" + unique_id
     output_dir = os.path.join("output", args.run_name)
 
-    if args.resume_from:
-        # TODO: support resume from
-        raise NotImplementedError()
-
     # number of timesteps within each trajectory to train on
     num_train_timesteps = int(args.num_steps * args.timestep_fraction)
 
     logger.info(f"\n{args}")
 
     # load scheduler, tokenizer and models.
-    if args.debug:
-        ms.runtime.launch_blocking()
-        pipeline = init_debug_pipeline(args.model)
-    else:
-        with nn.no_init_parameters():
-            pipeline = StableDiffusion3PipelineWithSDELogProb.from_pretrained(
-                args.model
-            )
+    with nn.no_init_parameters():
+        pipeline = StableDiffusion3PipelineWithSDELogProb.from_pretrained(args.model)
 
     # replace scheduler with FlowMatchEulerSDEDiscreteScheduler
     original_scheduler = pipeline.scheduler
@@ -363,11 +352,6 @@ def train(args: argparse.Namespace):
     )
 
     if args.num_image_per_prompt == 1 and args.per_prompt_stat_tracking:
-        logger.warning(
-            "Per prompt stat tracking is enabled, but num_image_per_prompt is set to 1. "
-            "This will result in no per prompt stats being tracked. "
-            "Please set num_image_per_prompt > 1 to enable per prompt stat tracking."
-        )
         args.per_prompt_stat_tracking = False
 
     # initialize stat tracker
@@ -394,10 +378,7 @@ def train(args: argparse.Namespace):
     )
     logger.info(f"Number of inner epochs = {args.num_inner_epochs}")
 
-    if args.resume_from:
-        raise NotImplementedError()
-    else:
-        first_epoch = 0
+    first_epoch = 0
     global_step = 0
 
     train_iter = train_dataloader.create_dict_iterator(output_numpy=True)
@@ -534,12 +515,7 @@ def train(args: argparse.Namespace):
             prompts = gather(samples["prompts"].tolist())
             advantages = stat_tracker.update(prompts, gathered_rewards["avg"])
             if len(set(prompts)) != samples_per_epoch // args.num_image_per_prompt:
-                logger.warning(
-                    (
-                        f"Number of unique prompts {len(set(prompts))} does not equal "
-                        f"to the sammples per epoch {samples_per_epoch} / num_image_per_prompt {args.num_image_per_prompt}."
-                    )
-                )
+                pass
             stat_tracker.clear()
         else:
             advantages = (gathered_rewards["avg"] - gathered_rewards["avg"].mean()) / (
@@ -554,20 +530,7 @@ def train(args: argparse.Namespace):
         del samples["rewards"]
 
         total_batch_size, num_timesteps = samples["timesteps"].shape
-        assert num_timesteps == args.num_steps
-
-        logger.debug(
-            {
-                "global_step": global_step,
-                "epoch": epoch,
-                **{
-                    f"reward_{key}": value.mean().item()
-                    for key, value in gathered_rewards.items()
-                    if "_strict_accuracy" not in key and "_accuracy" not in key
-                },
-                "advantages": np.abs(samples["advantages"]).mean().item(),
-            }
-        )
+        _ = num_timesteps
 
         #################### TRAINING ####################
         for inner_epoch in range(args.num_inner_epochs):
@@ -671,10 +634,8 @@ def train(args: argparse.Namespace):
 
                     if (i * num_train_timesteps + j) % gradient_accumulation_steps == 0:
                         grad_accumulated = grad
-                        logger.debug("Accumuated Gradient is reinitialized.")
                     else:
                         map_(lambda x, y: x.add_(y), grad_accumulated, grad)
-                        logger.debug("Accumuated Gradient is updated.")
 
                     if (
                         i * num_train_timesteps + j + 1
@@ -684,18 +645,11 @@ def train(args: argparse.Namespace):
                             grad_accumulated, max_norm=args.max_grad_norm
                         )
                         optimizer(grad_accumulated)
-                        logger.debug("Parameters are updated.")
 
                     avg_loss.append(loss.item())
                     global_step += 1
 
-                logger.debug(
-                    {
-                        "global_step": global_step,
-                        "epoch": epoch,
-                        "loss": np.mean(avg_loss).item(),
-                    }
-                )
+                _ = avg_loss
 
                 if args.ema:
                     ema(trainable_parameters, global_step)
@@ -753,7 +707,7 @@ def main():
         "--debug",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Whether to run in debug mode with a single layer network",
+        help="(Deprecated) Kept for CLI compatibility; has no effect.",
     )
 
     # ========== training arguments ===========
