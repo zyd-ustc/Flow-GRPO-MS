@@ -121,7 +121,7 @@ class DiffusionRMFluxScorer(Scorer):
         return images
 
     def _encode_images_to_latents(self, images: List[Image.Image]) -> ms.Tensor:
-        self.pipeline.vae.eval()
+        #self.pipeline.vae.eval()
 
         latents_list = []
         with ms.no_grad():
@@ -279,7 +279,7 @@ class DiffusionRMSD3Scorer(Scorer):
         return images
 
     def _encode_images_to_latents(self, images: List[Image.Image]) -> ms.Tensor:
-        self.pipeline.vae.eval()
+        #self.pipeline.vae.eval()
 
         latents_list = []
         with ms.no_grad():
