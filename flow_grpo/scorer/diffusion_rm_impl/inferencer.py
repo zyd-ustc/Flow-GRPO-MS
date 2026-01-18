@@ -132,7 +132,7 @@ class DRMInferencer:
                 )
 
             ms.load_param_into_net(net, filtered, strict_load=False)
-            print(f"[Diffusion-RM] ckpt keys={len(ckpt)}, net keys={(net_params)}, will_load={len(filtered)}")
+            print(f"[Diffusion-RM] ckpt keys={ckpt.keys()}")
 
         if getattr(self.config.model, "use_lora", False):
             # 1) backbone LoRA weights
