@@ -177,7 +177,7 @@ class TransformerHead(nn.Cell):
         self.mlp = nn.SequentialCell(
             mint.nn.Linear(d_model, hidden),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            mint.nn.Dropout(dropout),
             mint.nn.Linear(hidden, d_model),
         )
         
