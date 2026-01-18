@@ -13,7 +13,7 @@ from transformers import AutoConfig
 from mindone.peft import LoraConfig, get_peft_model
 import warnings
 
-from .reward_head import RewardHead
+from .reward_head import RewardHeadV3
 
 
 def _encode_prompt_with_t5(
@@ -203,6 +203,7 @@ class FLUXRewardModel(nn.Cell):
     def __init__(self, pipeline, config_model, vae_scale_factor):
         super().__init__()
         ## NOTE: All the modules should be moved to the target device and dtype before here!!!
+        self.config_model = config_model
         text_encoder_1 = pipeline.text_encoder
         text_encoder_2 = pipeline.text_encoder_2
 
@@ -257,15 +258,13 @@ class FLUXRewardModel(nn.Cell):
 
         # Get transformer output dimension
         backbone_dim = pipeline.transformer.inner_dim
-        # Initialize reward head
-        self.reward_head = RewardHead(
+        self.backbone_dim = backbone_dim
+        # Initialize reward head (only support Diffusion-RM v3 / QFormer style)
+        self.reward_head = RewardHeadV3(
             token_dim=backbone_dim,
             n_visual_heads=len(config_model.visual_head_idx),
             n_text_heads=len(config_model.text_head_idx),
-            t_embed_dim=backbone_dim,
-            use_t_embed=config_model.use_t_embed,
-            patch_size=2,
-            **config_model.reward_head
+            **getattr(config_model, "reward_head", {})
         )
 
         self.vae_scale_factor = vae_scale_factor

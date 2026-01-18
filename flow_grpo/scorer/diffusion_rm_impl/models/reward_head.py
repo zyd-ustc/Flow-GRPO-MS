@@ -311,3 +311,175 @@ class RewardHead(nn.Cell):
         return out
         
 
+class RMSNorm(nn.Cell):
+    """Torch-like RMSNorm with weight only (no bias)."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = ms.Parameter(mint.ones((dim,), dtype=ms.float32))
+
+    def construct(self, x: ms.Tensor) -> ms.Tensor:
+        # x: (..., dim)
+        x_f = x.astype(ms.float32)
+        var = mint.mean(x_f * x_f, dim=-1, keepdim=True)
+        x_norm = x_f * mint.rsqrt(var + self.eps)
+        return (x_norm * self.weight.astype(x_norm.dtype)).astype(x.dtype)
+
+
+class FiLMLayerAdapter(nn.Cell):
+    def __init__(self, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.layer_embed = ms.Parameter(mint.randn((1, 1, hidden_dim), dtype=ms.float32) * 0.02)
+        self.cond_mlp = nn.SequentialCell(
+            mint.nn.Linear(hidden_dim, hidden_dim * 2),
+            nn.SiLU(),
+            mint.nn.Linear(hidden_dim * 2, hidden_dim * 2),
+        )
+        self.proj = mint.nn.Linear(hidden_dim, output_dim)
+
+    def construct(self, x: ms.Tensor, t_emb: ms.Tensor):
+        # x: (B, N, C), t_emb: (B, C)
+        style = self.cond_mlp(t_emb)
+        gamma, beta = style.chunk(2, dim=-1)
+        gamma = gamma.unsqueeze(1)
+        beta = beta.unsqueeze(1)
+        x = x * (1 + gamma) + beta
+        x = x + self.layer_embed.astype(x.dtype)
+        return self.proj(x)
+
+
+def _scaled_dot_product_attention(q: ms.Tensor, k: ms.Tensor, v: ms.Tensor) -> ms.Tensor:
+    # Single-head attention: (B, Lq, D) x (B, Lk, D) -> (B, Lq, D)
+    d = q.shape[-1]
+    scores = mint.matmul(q, k.swapaxes(-2, -1)) / math.sqrt(float(d))
+    attn = mint.nn.functional.softmax(scores, dim=-1)
+    return mint.matmul(attn, v)
+
+
+class QFormerBlock(nn.Cell):
+    def __init__(self, dim: int, use_norm: bool = True, use_text: bool = True, dropout: float = 0.0):
+        super().__init__()
+        self.norm1 = RMSNorm(dim) if use_norm else None
+        self.norm2 = RMSNorm(dim) if use_norm else None
+        self.norm3 = RMSNorm(dim) if (use_norm and use_text) else None
+
+        self.to_q = mint.nn.Linear(dim, dim)
+        self.to_k_vis = mint.nn.Linear(dim, dim)
+        self.to_v_vis = mint.nn.Linear(dim, dim)
+
+        self.to_k_text = mint.nn.Linear(dim, dim) if use_text else None
+        self.to_v_text = mint.nn.Linear(dim, dim) if use_text else None
+
+        # keep structure to match ckpt keys: to_out.0.{weight,bias}, to_out.1 is dropout (no params)
+        self.to_out = nn.CellList([mint.nn.Linear(dim, dim), mint.nn.Dropout(dropout)])
+
+    def construct(self, queries: ms.Tensor, context_visual: ms.Tensor, context_text: Optional[ms.Tensor] = None):
+        if self.norm1 is not None:
+            queries = self.norm1(queries)
+        if self.norm2 is not None:
+            context_visual = self.norm2(context_visual)
+        if self.norm3 is not None and context_text is not None:
+            context_text = self.norm3(context_text)
+
+        q = self.to_q(queries)
+        k_vis = self.to_k_vis(context_visual)
+        v_vis = self.to_v_vis(context_visual)
+
+        if context_text is not None and self.to_k_text is not None:
+            k_text = self.to_k_text(context_text)
+            v_text = self.to_v_text(context_text)
+            k = mint.cat([k_vis, k_text], dim=1)
+            v = mint.cat([v_vis, v_text], dim=1)
+        else:
+            k = k_vis
+            v = v_vis
+
+        hidden_states = _scaled_dot_product_attention(q, k, v)
+        hidden_states = self.to_out[0](hidden_states)
+        hidden_states = self.to_out[1](hidden_states)
+        return hidden_states
+
+
+class RewardHeadV3(nn.Cell):
+    """
+    QFormer-style reward head (matches Diffusion-RM v3 checkpoints with keys like:
+    query_tokens / layer_adapters_visual.* / attn1.* / attn2.* / ff.* / head.*
+    """
+
+    def __init__(
+        self,
+        token_dim: int,
+        width: int = -1,
+        out_dim: int = 1,
+        n_visual_heads: int = 1,
+        n_text_heads: int = 1,
+        num_queries: int = 4,
+        **kwargs,
+    ):
+        super().__init__()
+        _ = kwargs
+
+        if width == -1:
+            width = token_dim
+
+        feature_out_dim = width // 4
+
+        self.layer_adapters_visual = nn.CellList(
+            [FiLMLayerAdapter(hidden_dim=width, output_dim=feature_out_dim) for _ in range(n_visual_heads)]
+        )
+        self.layer_adapters_text = nn.CellList(
+            [FiLMLayerAdapter(hidden_dim=width, output_dim=feature_out_dim) for _ in range(n_text_heads)]
+        )
+
+        self.agg_visual = mint.nn.Linear(n_visual_heads * feature_out_dim, width) if n_visual_heads > 0 else None
+        self.agg_text = mint.nn.Linear(n_text_heads * feature_out_dim, width) if n_text_heads > 0 else None
+
+        self.query_tokens = ms.Parameter(mint.randn((1, num_queries, width), dtype=ms.float32) * 0.02)
+
+        self.attn1 = QFormerBlock(dim=width, dropout=0.0, use_text=(n_text_heads > 0), use_norm=True)
+        self.attn2 = QFormerBlock(dim=width, dropout=0.0, use_text=False, use_norm=False)
+
+        self.ff = nn.SequentialCell(
+            mint.nn.Linear(width, width * 4),
+            nn.GELU(),
+            mint.nn.Linear(width * 4, width),
+        )
+
+        self.head = mint.nn.Linear(width, out_dim)
+
+    def construct(
+        self,
+        visual_features,
+        text_features,
+        t_embed: Optional[ms.Tensor] = None,
+        hw=None,
+    ) -> ms.Tensor:
+        _ = hw
+        # Process visual features
+        out_visual_features = []
+        for adapter, visual_feature in zip(self.layer_adapters_visual, visual_features):
+            out_visual_features.append(adapter(visual_feature, t_embed))
+        visual_out = None
+        if self.agg_visual is not None:
+            visual_out = self.agg_visual(mint.cat(out_visual_features, dim=-1))
+
+        # Process text features
+        out_text_features = []
+        for adapter, text_feature in zip(self.layer_adapters_text, text_features):
+            out_text_features.append(adapter(text_feature, t_embed))
+        text_out = None
+        if self.agg_text is not None:
+            text_out = self.agg_text(mint.cat(out_text_features, dim=-1))
+
+        # Prepare query tokens
+        bsz = (visual_out if visual_out is not None else text_out).shape[0]
+        queries = self.query_tokens.astype((visual_out if visual_out is not None else text_out).dtype).repeat(bsz, 1, 1)
+
+        # Attention blocks
+        queries = self.attn1(queries, visual_out, text_out)
+        queries = self.attn2(queries, visual_out)
+        queries = self.ff(queries)
+
+        scores = self.head(queries).mean(dim=1)
+        return scores

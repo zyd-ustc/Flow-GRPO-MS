@@ -132,7 +132,14 @@ class DRMInferencer:
                 )
 
             ms.load_param_into_net(net, filtered, strict_load=False)
-            print(f"[Diffusion-RM] ckpt keys={ckpt.keys()}")
+            print(
+                f"[Diffusion-RM] load {os.path.basename(ckpt_path)}: "
+                f"ckpt={len(ckpt)} params, net={len(net_params)} params, matched={len(filtered)}"
+            )
+            if len(filtered) == 0:
+                print(f"[Diffusion-RM] matched=0, ckpt key sample: {list(ckpt.keys())[:20]}")
+                print(f"[Diffusion-RM] net  key sample: {list(net_params.keys())[:20]}")
+            return ckpt, net_params, filtered, not_loaded
 
         if getattr(self.config.model, "use_lora", False):
             # 1) backbone LoRA weights
@@ -150,7 +157,13 @@ class DRMInferencer:
 
             # 2) reward head
             rm_head_ckpt = os.path.join(checkpoint_path, "rm_head.ckpt")
-            _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
+            ckpt, _, filtered, _ = _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
+            if len(filtered) == 0:
+                raise RuntimeError(
+                    "[Diffusion-RM] rm_head.ckpt does not match current reward head. "
+                    "This repository only supports Diffusion-RM v3 (QFormer-style) reward head. "
+                    f"ckpt key sample: {list(ckpt.keys())[:20]}"
+                )
 
         elif not getattr(self.config.model, "freeze_backbone", False):
             full_model_ckpt = os.path.join(checkpoint_path, "full_model.ckpt")
@@ -158,4 +171,10 @@ class DRMInferencer:
 
         else:
             rm_head_ckpt = os.path.join(checkpoint_path, "rm_head.ckpt")
-            _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
+            ckpt, _, filtered, _ = _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
+            if len(filtered) == 0:
+                raise RuntimeError(
+                    "[Diffusion-RM] rm_head.ckpt does not match current reward head. "
+                    "This repository only supports Diffusion-RM v3 (QFormer-style) reward head. "
+                    f"ckpt key sample: {list(ckpt.keys())[:20]}"
+                )
