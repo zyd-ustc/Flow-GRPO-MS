@@ -23,6 +23,13 @@
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000"
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000" --strip-prefix reward_head.
   python scripts/convert_diffusion_rm_weights.py --checkpoint_dir "../Diffusion-RM/outputs/.../step_15000" --rm-head-add-prefix reward_head.
+
+说明：
+- `adapter_model.safetensors`（LoRA）在不同训练/保存脚本里 key 形态可能不一致。
+  mindone PEFT 常见参数名为：`...lora_A.default.weight` / `...lora_B.default.weight`。
+  本脚本在转换 LoRA adapter 时会自动：
+  1) 加上 `backbone.` 前缀（若缺失）
+  2) 在 `lora_A/lora_B` 后插入 `default`（若缺失）
 """
 
 from __future__ import annotations
@@ -104,6 +111,42 @@ def _rewrite_state_dict_keys(
     return out
 
 
+def _rewrite_lora_adapter_keys(
+    state_dict: Dict[str, Any],
+    backbone_prefix: str = "backbone.",
+    adapter_name: str = "default",
+) -> Dict[str, Any]:
+    """
+    Convert LoRA adapter keys to match mindone PEFT naming:
+    - add `backbone.` prefix if missing
+    - convert `.lora_A.weight` -> `.lora_A.<adapter>.weight` (same for lora_B)
+    """
+    out: Dict[str, Any] = {}
+    collisions = []
+    for k, v in state_dict.items():
+        nk = str(k)
+
+        if backbone_prefix and not nk.startswith(backbone_prefix):
+            nk = backbone_prefix + nk
+
+        # Insert adapter name segment if missing: lora_A.weight -> lora_A.default.weight
+        for lora_tag in ("lora_A", "lora_B"):
+            needle = f".{lora_tag}.weight"
+            if needle in nk and f".{lora_tag}.{adapter_name}.weight" not in nk:
+                nk = nk.replace(needle, f".{lora_tag}.{adapter_name}.weight")
+
+        if nk in out and nk != k:
+            collisions.append((k, nk))
+            continue
+        out[nk] = v
+
+    if collisions:
+        print(f"[warn] LoRA key collisions after rewrite: {len(collisions)} (kept first occurrence)")
+        for old, new in collisions[:20]:
+            print(f"  - {old} -> {new}")
+    return out
+
+
 def convert_pt_to_ckpt(
     pt_path: str,
     ckpt_path: str,
@@ -150,6 +193,9 @@ def convert_safetensors_to_ckpt(
     bf16_to_fp16: bool = True,
     strip_prefixes: list[str] | None = None,
     add_prefixes: list[str] | None = None,
+    lora_adapter: bool = False,
+    lora_backbone_prefix: str = "backbone.",
+    lora_adapter_name: str = "default",
 ):
     if os.path.exists(ckpt_path) and not overwrite:
         print(f"[skip] {ckpt_path} already exists")
@@ -159,6 +205,12 @@ def convert_safetensors_to_ckpt(
 
     state_dict = load_file(st_path)
     state_dict = _rewrite_state_dict_keys(state_dict, strip_prefixes or [], add_prefixes or [])
+    if lora_adapter:
+        state_dict = _rewrite_lora_adapter_keys(
+            state_dict,
+            backbone_prefix=lora_backbone_prefix,
+            adapter_name=lora_adapter_name,
+        )
     ms_items = []
     bf16_seen = False
     for name, tensor in state_dict.items():
@@ -250,6 +302,9 @@ def main():
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
             add_prefixes=add_prefixes,
+            lora_adapter=True,
+            lora_backbone_prefix="backbone.",
+            lora_adapter_name="default",
         )
 
     print("[done] conversion finished")
