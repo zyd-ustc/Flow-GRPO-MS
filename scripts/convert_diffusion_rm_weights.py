@@ -58,7 +58,7 @@ def _unwrap_state_dict(obj: Any) -> Dict[str, Any]:
     raise ValueError("Unsupported checkpoint object format; cannot unwrap to state_dict.")
 
 
-def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True) -> ms.Tensor:
+def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True, cast_fp16: bool = False) -> ms.Tensor:
     # 延迟 import torch，避免推理侧引入依赖
     import torch  # pylint: disable=import-error
 
@@ -67,7 +67,10 @@ def _torch_tensor_to_ms(t, bf16_to_fp16: bool = True) -> ms.Tensor:
     if not isinstance(t, torch.Tensor):
         raise TypeError(f"Expected torch.Tensor, got {type(t)}")
 
-    if bf16_to_fp16 and t.dtype == torch.bfloat16:
+    if cast_fp16 and t.is_floating_point():
+        # Force all floating tensors to fp16 for MindSpore ckpt.
+        t = t.to(torch.float16)
+    elif bf16_to_fp16 and t.dtype == torch.bfloat16:
         t = t.to(torch.float16)
     return ms.Tensor(t.detach().cpu().numpy())
 
@@ -154,6 +157,7 @@ def convert_pt_to_ckpt(
     bf16_to_fp16: bool = True,
     strip_prefixes: list[str] | None = None,
     add_prefixes: list[str] | None = None,
+    cast_fp16: bool = False,
 ):
     import torch  # pylint: disable=import-error
 
@@ -176,7 +180,14 @@ def convert_pt_to_ckpt(
                     bf16_seen = True
             except Exception:
                 pass
-        ms_items.append({"name": name, "data": _torch_tensor_to_ms(tensor, bf16_to_fp16=bf16_to_fp16)})
+        ms_items.append(
+            {
+                "name": name,
+                "data": _torch_tensor_to_ms(
+                    tensor, bf16_to_fp16=bf16_to_fp16, cast_fp16=cast_fp16
+                ),
+            }
+        )
 
     if bf16_seen and bf16_to_fp16:
         print("[warn] bf16 detected; converted to fp16 for MindSpore ckpt")
@@ -196,6 +207,7 @@ def convert_safetensors_to_ckpt(
     lora_adapter: bool = False,
     lora_backbone_prefix: str = "backbone.",
     lora_adapter_name: str = "default",
+    cast_fp16: bool = False,
 ):
     if os.path.exists(ckpt_path) and not overwrite:
         print(f"[skip] {ckpt_path} already exists")
@@ -221,7 +233,14 @@ def convert_safetensors_to_ckpt(
                 bf16_seen = True
         except Exception:
             pass
-        ms_items.append({"name": name, "data": _torch_tensor_to_ms(tensor, bf16_to_fp16=bf16_to_fp16)})
+        ms_items.append(
+            {
+                "name": name,
+                "data": _torch_tensor_to_ms(
+                    tensor, bf16_to_fp16=bf16_to_fp16, cast_fp16=cast_fp16
+                ),
+            }
+        )
 
     if bf16_seen and bf16_to_fp16:
         print("[warn] bf16 detected; converted to fp16 for MindSpore ckpt")
@@ -236,6 +255,11 @@ def main():
     parser.add_argument("--checkpoint_dir", type=str, required=True, help="Diffusion-RM 的 step_xxx checkpoint 目录")
     parser.add_argument("--overwrite", action="store_true", help="覆盖已存在的 .ckpt")
     parser.add_argument("--keep_bf16", action="store_true", help="不将 bf16 转 fp16（若环境支持 bf16）")
+    parser.add_argument(
+        "--cast-fp16",
+        action="store_true",
+        help="将所有浮点权重统一转换为 float16 再保存为 MindSpore ckpt（会覆盖 fp32/bf16 等）。",
+    )
     parser.add_argument(
         "--strip-prefix",
         action="append",
@@ -263,6 +287,7 @@ def main():
     strip_prefixes = list(args.strip_prefix)
     add_prefixes = list(args.add_prefix)
     rm_head_add_prefix = str(args.rm_head_add_prefix or "")
+    cast_fp16 = bool(args.cast_fp16)
 
     if not os.path.isdir(ckpt_dir):
         raise FileNotFoundError(f"checkpoint_dir not found: {ckpt_dir}")
@@ -278,6 +303,7 @@ def main():
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
             add_prefixes=rm_add,
+            cast_fp16=cast_fp16,
         )
 
     # full_model
@@ -290,6 +316,7 @@ def main():
             bf16_to_fp16=bf16_to_fp16,
             strip_prefixes=strip_prefixes,
             add_prefixes=add_prefixes,
+            cast_fp16=cast_fp16,
         )
 
     # backbone_lora adapter
@@ -305,6 +332,7 @@ def main():
             lora_adapter=True,
             lora_backbone_prefix="backbone.",
             lora_adapter_name="default",
+            cast_fp16=cast_fp16,
         )
 
     print("[done] conversion finished")
