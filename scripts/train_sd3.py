@@ -609,7 +609,7 @@ def train(args: argparse.Namespace):
                     # MindOne PEFT bug workaround (no try/except fallback):
                     # disable_adapter() internally iterates `for name, module in base_model.name_cells():`
                     # but MindSpore `name_cells()` is dict-like; we temporarily patch it to return `.items()`.
-                    base_model = pipeline.transformer.get_base_model()
+                    base_model = pipeline.transformer.base_model
                     _orig_name_cells = base_model.name_cells
                     base_model.name_cells = lambda *a, **kw: _orig_name_cells(*a, **kw).items()
                     try:
