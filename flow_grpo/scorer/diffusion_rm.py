@@ -73,8 +73,8 @@ class DiffusionRMFluxScorer(Scorer):
             u=self.u,
         )
 
-        scores = (rewards.float() / 5.0).asnumpy().tolist()
-        return scores
+        scores = (rewards.float() / 5.0).reshape((-1,)).asnumpy().tolist()
+        return [float(s) for s in scores]
 
     def reward(
         self,
@@ -235,8 +235,8 @@ class DiffusionRMSD3Scorer(Scorer):
             u=self.u,
         )
 
-        scores = (rewards.float() / 5.0).asnumpy().tolist()
-        return scores
+        scores = (rewards.float() / 5.0).reshape((-1,)).asnumpy().tolist()
+        return [float(s) for s in scores]
 
     def reward(
         self,
