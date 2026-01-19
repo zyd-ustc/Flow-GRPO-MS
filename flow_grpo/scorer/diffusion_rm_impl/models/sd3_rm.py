@@ -79,10 +79,11 @@ def _encode_prompt_with_clip(
         if text_input_ids is None:
             raise ValueError("text_input_ids must be provided when the tokenizer is not specified")
 
-    prompt_embeds = text_encoder(text_input_ids, output_hidden_states=True)
-
-    pooled_prompt_embeds = prompt_embeds[0]
-    prompt_embeds = prompt_embeds.hidden_states[-2]
+    outputs = text_encoder(text_input_ids, output_hidden_states=True)
+    # (last_hidden_state, pooled_output, hidden_states, attentions...)
+    pooled_prompt_embeds = outputs[1] if len(outputs) > 1 else outputs[0]
+    hidden_states = outputs[2] if len(outputs) > 2 else None
+    prompt_embeds = hidden_states[-2] if hidden_states is not None else outputs[0]
     # prompt_embeds = prompt_embeds.to(dtype=text_encoder.dtype)
 
     _, seq_len, _ = prompt_embeds.shape
