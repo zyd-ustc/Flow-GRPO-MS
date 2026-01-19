@@ -75,7 +75,7 @@ class DRMInferencer:
     def reward(self, text_conds, latents: ms.Tensor, u: float = 0.9) -> ms.Tensor:
         #self.model.eval()
 
-        # switch adapter if available (prefer rm_lora, fallback to default)
+        # switch adapter if available (only keep "default")
         ori_adapter = None
         backbone = getattr(self.model, "backbone", None)
         if backbone is not None and hasattr(backbone, "set_adapter"):
@@ -88,26 +88,8 @@ class DRMInferencer:
             except Exception:
                 available = []
 
-            target = None
-            if "rm_lora" in available:
-                target = "rm_lora"
-            elif "default" in available:
-                target = "default"
-            elif available:
-                target = available[0]
+            backbone.set_adapter("default")
 
-            if target is not None:
-                try:
-                    backbone.set_adapter(target)
-                    # debug: print once to help future simplification
-                    if getattr(self, "_adapter_debug_printed", False) is False:
-                        self._adapter_debug_printed = True
-                        print(
-                            f"[Diffusion-RM] adapter selected: {target} "
-                            f"(available={available}, original={ori_adapter})"
-                        )
-                except Exception:
-                    pass
 
         bsz = latents.shape[0]
 
@@ -153,49 +135,17 @@ class DRMInferencer:
                 )
 
             ckpt = ms.load_checkpoint(ckpt_path)
-            net_params = net.parameters_dict()
-            filtered = {k: v for k, v in ckpt.items() if k in net_params}
-            not_loaded = [k for k in ckpt.keys() if k not in net_params]
-            if not_loaded:
-                # best-effort: ignore unmatched keys
-                print(
-                    f"[Diffusion-RM] Warning: {len(not_loaded)} keys in {os.path.basename(ckpt_path)} "
-                    "do not match current network and were ignored."
-                )
-
-            ms.load_param_into_net(net, filtered, strict_load=False)
-            print(
-                f"[Diffusion-RM] load {os.path.basename(ckpt_path)}: "
-                f"ckpt={len(ckpt)} params, net={len(net_params)} params, matched={len(filtered)}"
-            )
-            if len(filtered) == 0:
-                print(f"[Diffusion-RM] matched=0, ckpt key sample: {list(ckpt.keys())[:20]}")
-                print(f"[Diffusion-RM] net  key sample: {list(net_params.keys())[:20]}")
-            return ckpt, net_params, filtered, not_loaded
+            ms.load_param_into_net(net, ckpt, strict_load=False)
 
         if getattr(self.config.model, "use_lora", False):
             # 1) backbone LoRA weights
             lora_ckpt = os.path.join(checkpoint_path, "backbone_lora", "adapter_model.ckpt")
-            if os.path.exists(lora_ckpt):
-                _load_ms_ckpt_into_net(self.model.backbone, lora_ckpt)
-            else:
-                # allow running without LoRA weights if user didn't provide them
-                lora_dir = os.path.join(checkpoint_path, "backbone_lora")
-                if os.path.exists(lora_dir):
-                    raise FileNotFoundError(
-                        f"Found LoRA dir {lora_dir} but missing MindSpore file {lora_ckpt}. "
-                        "Please convert adapter_model.safetensors to adapter_model.ckpt."
-                    )
+            _load_ms_ckpt_into_net(self.model.backbone, lora_ckpt)
 
             # 2) reward head
             rm_head_ckpt = os.path.join(checkpoint_path, "rm_head.ckpt")
-            ckpt, _, filtered, _ = _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
-            if len(filtered) == 0:
-                raise RuntimeError(
-                    "[Diffusion-RM] rm_head.ckpt does not match current reward head. "
-                    "This repository only supports Diffusion-RM v3 (QFormer-style) reward head. "
-                    f"ckpt key sample: {list(ckpt.keys())[:20]}"
-                )
+            _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
+
 
         elif not getattr(self.config.model, "freeze_backbone", False):
             full_model_ckpt = os.path.join(checkpoint_path, "full_model.ckpt")
@@ -203,10 +153,4 @@ class DRMInferencer:
 
         else:
             rm_head_ckpt = os.path.join(checkpoint_path, "rm_head.ckpt")
-            ckpt, _, filtered, _ = _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
-            if len(filtered) == 0:
-                raise RuntimeError(
-                    "[Diffusion-RM] rm_head.ckpt does not match current reward head. "
-                    "This repository only supports Diffusion-RM v3 (QFormer-style) reward head. "
-                    f"ckpt key sample: {list(ckpt.keys())[:20]}"
-                )
+            _load_ms_ckpt_into_net(self.model.reward_head, rm_head_ckpt)
