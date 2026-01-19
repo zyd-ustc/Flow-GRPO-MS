@@ -80,11 +80,10 @@ def _encode_prompt_with_clip(
             raise ValueError("text_input_ids must be provided when the tokenizer is not specified")
 
     outputs = text_encoder(text_input_ids, output_hidden_states=True)
-    # (last_hidden_state, pooled_output, hidden_states, attentions...)
-    pooled_prompt_embeds = outputs[1] if len(outputs) > 1 else outputs[0]
+    pooled_prompt_embeds = outputs[0]
+    last_hidden_state = outputs[1]
     hidden_states = outputs[2] if len(outputs) > 2 else None
-    prompt_embeds = hidden_states[-2] if hidden_states is not None else outputs[0]
-    # prompt_embeds = prompt_embeds.to(dtype=text_encoder.dtype)
+    prompt_embeds = hidden_states[-2] if hidden_states is not None else last_hidden_state
 
     _, seq_len, _ = prompt_embeds.shape
     # duplicate text embeddings for each generation per prompt, using mps friendly method
