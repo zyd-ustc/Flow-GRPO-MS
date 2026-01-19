@@ -8,6 +8,7 @@ import mindspore as ms
 from mindspore import mint, nn
 
 from typing import Optional
+import numpy as np
 from diffusers import DiffusionPipeline
 from transformers import AutoConfig
 from mindone.peft import LoraConfig, get_peft_model
@@ -33,9 +34,9 @@ def _encode_prompt_with_t5(
             max_length=max_sequence_length,
             truncation=True,
             add_special_tokens=True,
-            return_tensors="pt",
+            return_tensors="np",
         )
-        text_input_ids = text_inputs.input_ids
+        text_input_ids = ms.Tensor(np.asarray(text_inputs.input_ids), dtype=ms.int32)
     else:
         if text_input_ids is None:
             raise ValueError("text_input_ids must be provided when the tokenizer is not specified")
@@ -70,10 +71,10 @@ def _encode_prompt_with_clip(
             padding="max_length",
             max_length=77,
             truncation=True,
-            return_tensors="pt",
+            return_tensors="np",
         )
 
-        text_input_ids = text_inputs.input_ids
+        text_input_ids = ms.Tensor(np.asarray(text_inputs.input_ids), dtype=ms.int32)
     else:
         if text_input_ids is None:
             raise ValueError("text_input_ids must be provided when the tokenizer is not specified")
