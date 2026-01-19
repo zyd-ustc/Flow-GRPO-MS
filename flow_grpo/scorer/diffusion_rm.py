@@ -131,7 +131,7 @@ class DiffusionRMFluxScorer(Scorer):
                     dtype=ms.float32
                 )
 
-                latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
+                latents = self.pipeline.vae.encode(pixel_values)[0].latent_dist.sample()
                 # Match diffusers latent convention when applicable
                 scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
                 shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
@@ -289,7 +289,7 @@ class DiffusionRMSD3Scorer(Scorer):
                     dtype=ms.float32
                 )
 
-                latents = self.pipeline.vae.encode(pixel_values).latent_dist.sample()
+                latents = self.pipeline.vae.encode(pixel_values)[0].latent_dist.sample()
                 scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
                 shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
                 if scaling_factor is not None and shift_factor is not None:
