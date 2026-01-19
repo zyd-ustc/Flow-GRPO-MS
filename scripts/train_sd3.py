@@ -606,15 +606,17 @@ def train(args: argparse.Namespace):
                         -1, 1, 1, 1
                     )
 
-                    _, prev_sample_mean_ref, _ = net_with_loss.compute_log_prob(
-                        latents,
-                        next_latents,
-                        timesteps,
-                        embeds,
-                        pooled_embeds,
-                        sigma,
-                        sigma_next,
-                    )
+                    with ms._no_grad():
+                        _, prev_sample_mean_ref, _ = net_with_loss.compute_log_prob(
+                            latents,
+                            next_latents,
+                            timesteps,
+                            embeds,
+                            pooled_embeds,
+                            sigma,
+                            sigma_next,
+                        )
+                    prev_sample_mean_ref = ms.ops.stop_gradient(prev_sample_mean_ref)
 
                     loss, grad = loss_and_grad_fn(
                         latents,
