@@ -3,7 +3,7 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-SD3_PATH="${SD3_PATH:-stabilityai/stable-diffusion-3.5-medium}"
+SD3_PATH="/home/zyd/Reward/Flow-GRPO-MS/models/stable-diffusion-3.5-medium"
 
 
 # export QWEN_VL_PATH="/path/to/Qwen2.5-VL-7B-Instruct"
@@ -24,7 +24,6 @@ msrun --worker_num 1 --local_worker_num 1 --master_port 9527 --join True "${ROOT
     --reward-weights 1.0 \
     --model "${SD3_PATH}" \
     --dataset "${ROOT_DIR}/dataset/ocr" \
-    --diffusion-rm-checkpoint-path "/path/to/Diffusion-RM/.../checkpoints/step_15000" \
-    --diffusion-rm-config-path "/path/to/Diffusion-RM/.../config.json" \
+    --diffusion-rm-checkpoint-path "/home/zyd/Reward/Flow-GRPO-MS/models/epoch_001" \
+    --diffusion-rm-config-path "/home/zyd/Reward/Flow-GRPO-MS/models/epoch_001/config.json" \
     --diffusion-rm-u 0.9 \
-    --diffusion-rm-use-training-pipeline True \
