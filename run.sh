@@ -24,6 +24,11 @@ msrun --worker_num 8 --local_worker_num 8 --master_port 9527 --join True "${ROOT
     --reward-weights 1.0 \
     --model "${SD3_PATH}" \
     --dataset "${ROOT_DIR}/dataset/ocr" \
+    --guidance-scale 1.0 \
+    --train-batch-size 1 \
+    --num-image-per-prompt 1 \
+    --test-batch-size 1 \
+    --beta 0.0 \
     --diffusion-rm-checkpoint-path "/home/zyd/Reward/Flow-GRPO-MS/models/epoch_001" \
     --diffusion-rm-config-path "/home/zyd/Reward/Flow-GRPO-MS/models/epoch_001/config.json" \
     --diffusion-rm-u 0.9 \
