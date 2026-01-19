@@ -157,7 +157,7 @@ class DiffusionRMFluxScorer(Scorer):
                     self.pipeline.tokenizer,
                     self.pipeline.tokenizer_2,
                 ],
-                prompts=prompts,
+                prompt=prompts,
                 max_sequence_length=128,
             )
 
@@ -317,7 +317,7 @@ class DiffusionRMSD3Scorer(Scorer):
                     self.pipeline.tokenizer_2,
                     self.pipeline.tokenizer_3,
                 ],
-                prompts=prompts,
+                prompt=prompts,
                 max_sequence_length=128,
             )
 
