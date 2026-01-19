@@ -120,6 +120,48 @@ class DiffusionRMFluxScorer(Scorer):
 
         return images
 
+    def _vae_encode_latents(self, pixel_values: ms.Tensor) -> ms.Tensor:
+        """
+        兼容 MindOne/MindSpore VAE.encode 的多种返回结构，并打印一次分支信息，便于后续简化：
+        - tuple/list: (latents,)
+        - output.latent: tensor
+        - output.latent_dist: distribution/tensor
+        - distribution.sample()
+        """
+        enc = self.pipeline.vae.encode(pixel_values)
+
+        mode = None
+        if isinstance(enc, (tuple, list)):
+            enc0 = enc[0]
+            if hasattr(enc0, "latent_dist"):
+                ld = enc0.latent_dist
+                out = ld.sample() if hasattr(ld, "sample") else ld
+                mode = "tuple->latent_dist"
+            else:
+                out = enc0
+                mode = "tuple->tensor"
+        else:
+            if hasattr(enc, "latent_dist"):
+                ld = enc.latent_dist
+                out = ld.sample() if hasattr(ld, "sample") else ld
+                mode = "obj.latent_dist"
+            elif hasattr(enc, "latent"):
+                out = enc.latent
+                mode = "obj.latent"
+            elif hasattr(enc, "sample"):
+                out = enc.sample()
+                mode = "obj.sample()"
+            else:
+                out = enc
+                mode = "obj.tensor"
+
+        # log once per scorer instance
+        if getattr(self, "_vae_encode_mode", None) is None:
+            self._vae_encode_mode = mode
+            print(f"[Diffusion-RM] VAE.encode return mode: {mode}")
+
+        return out
+
     def _encode_images_to_latents(self, images: List[Image.Image]) -> ms.Tensor:
         #self.pipeline.vae.eval()
 
@@ -131,7 +173,7 @@ class DiffusionRMFluxScorer(Scorer):
                     dtype=ms.float32
                 )
 
-                latents = self.pipeline.vae.encode(pixel_values)[0].latent_dist.sample()
+                latents = self._vae_encode_latents(pixel_values)
                 # Match diffusers latent convention when applicable
                 scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
                 shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
@@ -289,7 +331,8 @@ class DiffusionRMSD3Scorer(Scorer):
                     dtype=ms.float32
                 )
 
-                latents = self.pipeline.vae.encode(pixel_values)[0].latent_dist.sample()
+                # reuse the same robust encode logic as FLUX scorer
+                latents = DiffusionRMFluxScorer._vae_encode_latents(self, pixel_values)
                 scaling_factor = getattr(getattr(self.pipeline.vae, "config", None), "scaling_factor", None)
                 shift_factor = getattr(getattr(self.pipeline.vae, "config", None), "shift_factor", None)
                 if scaling_factor is not None and shift_factor is not None:
