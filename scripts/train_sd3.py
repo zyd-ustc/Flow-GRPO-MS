@@ -768,7 +768,7 @@ def main():
         help="Number of inner epochs to train for",
     )
     group.add_argument(
-        "--train-batch-size", type=int, default=5, help="Batch size for training"
+        "--train-batch-size", type=int, default=2, help="Batch size for training"
     )
     group.add_argument(
         "--num-batches-per-epoch",
