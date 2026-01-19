@@ -336,6 +336,8 @@ class FiLMLayerAdapter(nn.Cell):
 
     def construct(self, x: ms.Tensor, t_emb: ms.Tensor):
         # x: (B, N, C), t_emb: (B, C)
+        x = x.astype(ms.float32)
+        t_emb = t_emb.astype(ms.float32)
         style = self.cond_mlp(t_emb)
         gamma, beta = style.chunk(2, dim=-1)
         gamma = gamma.unsqueeze(1)
