@@ -19,7 +19,7 @@ SD3_PATH="/home/zyd/Reward/Flow-GRPO-MS/models/stable-diffusion-3.5-medium"
 
 export TOKENIZERS_PARALLELISM=False
 
-msrun --worker_num 1 --local_worker_num 1 --master_port 9527 --join True "${ROOT_DIR}/scripts/train_sd3.py" \
+msrun --worker_num 4 --local_worker_num 4 --master_port 9527 --join True "${ROOT_DIR}/scripts/train_sd3.py" \
     --reward diffusion-rm-sd3 \
     --reward-weights 1.0 \
     --model "${SD3_PATH}" \
