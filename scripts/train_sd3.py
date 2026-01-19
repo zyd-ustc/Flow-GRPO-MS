@@ -39,7 +39,6 @@ DEFAULT_MODEL = "stabilityai/stable-diffusion-3.5-medium"
 
 logger = get_logger()
 
-
 def evaluate(
     pipeline: StableDiffusion3PipelineWithSDELogProb,
     reward_fn: MultiScorer,
@@ -607,6 +606,12 @@ def train(args: argparse.Namespace):
                         -1, 1, 1, 1
                     )
 
+                    # MindOne PEFT bug workaround (no try/except fallback):
+                    # disable_adapter() internally iterates `for name, module in base_model.name_cells():`
+                    # but MindSpore `name_cells()` is dict-like; we temporarily patch it to return `.items()`.
+                    base_model = pipeline.transformer.get_base_model()
+                    _orig_name_cells = base_model.name_cells
+                    base_model.name_cells = lambda *a, **kw: _orig_name_cells(*a, **kw).items()
                     try:
                         with pipeline.transformer.disable_adapter():
                             _, prev_sample_mean_ref, _ = net_with_loss.compute_log_prob(
@@ -618,37 +623,8 @@ def train(args: argparse.Namespace):
                                 sigma,
                                 sigma_next,
                             )
-                    except Exception as e:
-                        # Debug info to locate MindOne PEFT disable_adapter crash root cause
-                        logger.error("pipeline.transformer.disable_adapter() failed: %r", e)
-                        try:
-                            import traceback
-
-                            logger.error("disable_adapter traceback:\n%s", traceback.format_exc())
-                        except Exception:
-                            pass
-
-                        tr = pipeline.transformer
-                        logger.error("transformer type: %s", type(tr))
-                        logger.error("has disable_adapter: %s", hasattr(tr, "disable_adapter"))
-                        logger.error("has set_adapter: %s", hasattr(tr, "set_adapter"))
-                        logger.error("active_adapter: %s", getattr(tr, "active_adapter", None))
-                        logger.error("peft_config keys: %s", list(getattr(tr, "peft_config", {}).keys()) if hasattr(tr, "peft_config") else None)
-
-                        try:
-                            base = tr.get_base_model() if hasattr(tr, "get_base_model") else getattr(tr, "base_model", None)
-                            logger.error("base_model type: %s", type(base))
-                            if base is not None and hasattr(base, "name_cells"):
-                                nc = base.name_cells()
-                                logger.error("base_model.name_cells() type: %s", type(nc))
-                                try:
-                                    logger.error("base_model.name_cells() sample: %s", list(nc)[:5])
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-
-                        raise
+                    finally:
+                        base_model.name_cells = _orig_name_cells
 
                     loss, grad = loss_and_grad_fn(
                         latents,
