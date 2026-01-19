@@ -75,10 +75,39 @@ class DRMInferencer:
     def reward(self, text_conds, latents: ms.Tensor, u: float = 0.9) -> ms.Tensor:
         #self.model.eval()
 
-        # switch to rm_lora if available
-        ori_adapter = getattr(self.model.backbone, "active_adapter", None)
-        if hasattr(self.model.backbone, "set_adapter"):
-            self.model.backbone.set_adapter("rm_lora")
+        # switch adapter if available (prefer rm_lora, fallback to default)
+        ori_adapter = None
+        backbone = getattr(self.model, "backbone", None)
+        if backbone is not None and hasattr(backbone, "set_adapter"):
+            ori_adapter = getattr(backbone, "active_adapter", None)
+            available = []
+            try:
+                peft_cfg = getattr(backbone, "peft_config", None)
+                if isinstance(peft_cfg, dict):
+                    available = list(peft_cfg.keys())
+            except Exception:
+                available = []
+
+            target = None
+            if "rm_lora" in available:
+                target = "rm_lora"
+            elif "default" in available:
+                target = "default"
+            elif available:
+                target = available[0]
+
+            if target is not None:
+                try:
+                    backbone.set_adapter(target)
+                    # debug: print once to help future simplification
+                    if getattr(self, "_adapter_debug_printed", False) is False:
+                        self._adapter_debug_printed = True
+                        print(
+                            f"[Diffusion-RM] adapter selected: {target} "
+                            f"(available={available}, original={ori_adapter})"
+                        )
+                except Exception:
+                    pass
 
         bsz = latents.shape[0]
 
@@ -100,8 +129,11 @@ class DRMInferencer:
         )
 
         # restore adapter
-        if ori_adapter is not None and hasattr(self.model.backbone, "set_adapter"):
-            self.model.backbone.set_adapter(ori_adapter)
+        if ori_adapter is not None and backbone is not None and hasattr(backbone, "set_adapter"):
+            try:
+                backbone.set_adapter(ori_adapter)
+            except Exception:
+                pass
 
         return score
 
