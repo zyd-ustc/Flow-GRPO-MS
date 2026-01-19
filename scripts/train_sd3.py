@@ -640,6 +640,7 @@ def train(args: argparse.Namespace):
                     if (
                         i * num_train_timesteps + j + 1
                     ) % gradient_accumulation_steps == 0:
+                        grad_accumulated = tuple(g.contiguous() for g in grad_accumulated)
                         syn_gradients(grad_accumulated)
                         clip_by_global_norm(
                             grad_accumulated, max_norm=args.max_grad_norm
