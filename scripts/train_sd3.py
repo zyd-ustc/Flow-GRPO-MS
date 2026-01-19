@@ -607,16 +607,48 @@ def train(args: argparse.Namespace):
                         -1, 1, 1, 1
                     )
 
-                    with pipeline.transformer.disable_adapter():
-                        _, prev_sample_mean_ref, _ = net_with_loss.compute_log_prob(
-                            latents,
-                            next_latents,
-                            timesteps,
-                            embeds,
-                            pooled_embeds,
-                            sigma,
-                            sigma_next,
-                        )
+                    try:
+                        with pipeline.transformer.disable_adapter():
+                            _, prev_sample_mean_ref, _ = net_with_loss.compute_log_prob(
+                                latents,
+                                next_latents,
+                                timesteps,
+                                embeds,
+                                pooled_embeds,
+                                sigma,
+                                sigma_next,
+                            )
+                    except Exception as e:
+                        # Debug info to locate MindOne PEFT disable_adapter crash root cause
+                        logger.error("pipeline.transformer.disable_adapter() failed: %r", e)
+                        try:
+                            import traceback
+
+                            logger.error("disable_adapter traceback:\n%s", traceback.format_exc())
+                        except Exception:
+                            pass
+
+                        tr = pipeline.transformer
+                        logger.error("transformer type: %s", type(tr))
+                        logger.error("has disable_adapter: %s", hasattr(tr, "disable_adapter"))
+                        logger.error("has set_adapter: %s", hasattr(tr, "set_adapter"))
+                        logger.error("active_adapter: %s", getattr(tr, "active_adapter", None))
+                        logger.error("peft_config keys: %s", list(getattr(tr, "peft_config", {}).keys()) if hasattr(tr, "peft_config") else None)
+
+                        try:
+                            base = tr.get_base_model() if hasattr(tr, "get_base_model") else getattr(tr, "base_model", None)
+                            logger.error("base_model type: %s", type(base))
+                            if base is not None and hasattr(base, "name_cells"):
+                                nc = base.name_cells()
+                                logger.error("base_model.name_cells() type: %s", type(nc))
+                                try:
+                                    logger.error("base_model.name_cells() sample: %s", list(nc)[:5])
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                        raise
 
                     loss, grad = loss_and_grad_fn(
                         latents,
