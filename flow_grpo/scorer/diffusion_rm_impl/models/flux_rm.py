@@ -1,8 +1,4 @@
-"""Diffusion-based reward model (FLUX).
-
-Vendor-copied from `Diffusion-RM/diffusion_rm/models/flux_rm.py` to make Flow-GRPO-MS
-self-contained (no external `diffusion_rm` dependency at runtime).
-"""
+"""Diffusion-based reward model (FLUX)."""
 
 import mindspore as ms
 from mindspore import mint, nn
@@ -52,7 +48,6 @@ def _encode_prompt_with_t5(
 
     _, seq_len, _ = prompt_embeds.shape
 
-    # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
@@ -91,10 +86,7 @@ def _encode_prompt_with_clip(
     else:
         dtype = text_encoder.dtype
 
-    # Use pooled output of CLIPTextModel
     prompt_embeds = prompt_embeds.pooler_output
-    # prompt_embeds = prompt_embeds.to(dtype=dtype)
-    # duplicate text embeddings for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, -1)
 
@@ -141,7 +133,6 @@ def encode_prompt(
 class FLUXBackbone(nn.Cell):
     def __init__(self, transformer, config_model):
         super().__init__()
-        ## NOTE: All the modules should be moved to the target device and dtype before here!!!
         self.pos_embed = transformer.pos_embed
         self.time_text_embed = transformer.time_text_embed
         self.context_embedder = transformer.context_embedder
@@ -167,7 +158,7 @@ class FLUXBackbone(nn.Cell):
         hidden_states = self.x_embedder(hidden_states)
 
         timestep = timestep.to(hidden_states.dtype)
-        temb = self.time_text_embed(timestep, guidance, pooled_projections)   # [0, 1000]
+        temb = self.time_text_embed(timestep, guidance, pooled_projections)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         if txt_ids.ndim == 3:
@@ -213,7 +204,6 @@ class FLUXRewardModel(nn.Cell):
         self.text_encoders = [text_encoder_1, text_encoder_2]
         self.tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2]
 
-        # use only the first N layers of the transformer
         self.backbone = FLUXBackbone(
             transformer=pipeline.transformer,
             config_model=config_model,
@@ -223,7 +213,6 @@ class FLUXRewardModel(nn.Cell):
             for param in self.backbone.parameters():
                 param.requires_grad = False
         elif config_model.use_lora and config_model.lora_config is not None:
-            # Apply LoRA if specified
             target_modules = [
                 "attn.add_k_proj",
                 "attn.add_q_proj",
@@ -256,10 +245,8 @@ class FLUXRewardModel(nn.Cell):
             )
             self.backbone = get_peft_model(self.backbone, lora_config)
 
-        # Get transformer output dimension
         backbone_dim = pipeline.transformer.inner_dim
         self.backbone_dim = backbone_dim
-        # Initialize reward head (only support Diffusion-RM v3 / QFormer style)
         self.reward_head = RewardHeadV3(
             token_dim=backbone_dim,
             n_visual_heads=len(config_model.visual_head_idx),

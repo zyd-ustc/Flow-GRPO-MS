@@ -9,7 +9,6 @@ from .models.flux_rm import FLUXRewardModel
 
 
 def get_timesteps_from_u(noise_scheduler, u: ms.Tensor, n_dim: int = 4):
-    # Keep consistent with upstream implementation: index = u * num_train_timesteps
     indices = (u * noise_scheduler.config.num_train_timesteps).long()
     timesteps = noise_scheduler.timesteps[indices]
 
@@ -44,7 +43,6 @@ class DRMInferencer:
         if is_flux:
             vae_scale_factor = getattr(pipeline, "vae_scale_factor", None)
             if vae_scale_factor is None:
-                # best-effort fallback
                 vae_scale_factor = getattr(getattr(pipeline, "vae", None), "vae_scale_factor", 8)
             self.model = FLUXRewardModel(
                 pipeline=pipeline,
@@ -59,7 +57,6 @@ class DRMInferencer:
                 dtype=model_dtype,
             )
 
-        # copy scheduler config
         scheduler_cls = type(pipeline.scheduler)
         self.noise_scheduler = scheduler_cls.from_config(pipeline.scheduler.config)
 
@@ -73,9 +70,6 @@ class DRMInferencer:
         self.load_checkpoint(model_path)
 
     def reward(self, text_conds, latents: ms.Tensor, u: float = 0.9) -> ms.Tensor:
-        #self.model.eval()
-
-        # switch adapter if available (only keep "default")
         ori_adapter = None
         backbone = getattr(self.model, "backbone", None)
         if backbone is not None and hasattr(backbone, "set_adapter"):
@@ -115,7 +109,6 @@ class DRMInferencer:
             **text_conds,
         )
 
-        # restore adapter
         if ori_adapter is not None and backbone is not None and hasattr(backbone, "set_adapter"):
             try:
                 backbone.set_adapter(ori_adapter)
@@ -125,13 +118,6 @@ class DRMInferencer:
         return score
 
     def load_checkpoint(self, checkpoint_path: str):
-        # NOTE:
-        # Diffusion-RM 原始训练产物通常是 PyTorch 的 .pt/.safetensors。
-        # 这里推理侧 **只加载 MindSpore ckpt**（需要提前用脚本转换一次）。
-        #
-        # 转换脚本会尽量保持参数 key 不变，推理侧按 name 匹配加载；
-        # 未匹配到的 key 会被忽略（通常是训练侧冗余信息或不同 backbone 结构导致）。
-
         def _load_ms_ckpt_into_net(net: ms.nn.Cell, ckpt_path: str):
             if not os.path.exists(ckpt_path):
                 raise FileNotFoundError(

@@ -52,7 +52,6 @@ class TransformerBlock(nn.Cell):
         )
 
     def construct(self, x: ms.Tensor) -> ms.Tensor:
-        # x: (B, N, C)
         h = self.norm1(x)
         h, _ = self.attn(h, h, h, need_weights=False)
         x = x + self.dropout(h)
@@ -62,11 +61,6 @@ class TransformerBlock(nn.Cell):
         return x
     
 class Conv1DHead(nn.Cell):
-    """
-    tokens: (B, N, C)
-    text_embed: (B, D_text)
-    return: logits: (B, N)
-    """
     def __init__(self, in_c: int, width: int = 256, out_c: int = 256):
         super().__init__()
         
@@ -86,23 +80,18 @@ class Conv1DHead(nn.Cell):
         
 
     def construct(self, x: ms.Tensor) -> ms.Tensor:
-        x = x.permute(0, 2, 1).contiguous()  # (B, C, N)
+        x = x.permute(0, 2, 1).contiguous()
         
-        x = self.conv1(x)  # (B, width, N)
-        x = self.conv2(x)  # (B, width, N)
+        x = self.conv1(x)
+        x = self.conv2(x)
         
-        x = self.conv_out(x)  # (B, out_c, N)
+        x = self.conv_out(x)
         
-        x = x.permute(0, 2, 1).contiguous()  # (B, N, out_c)
+        x = x.permute(0, 2, 1).contiguous()
         
         return x
 
 class Conv2DHead(nn.Cell):
-    """
-    tokens: (B, C, H, W)
-    text_embed: (B, D_text)
-    return: logits: (B, N)
-    """
     def __init__(self, in_c: int, width: int = 256, out_c: int = 256, t_embed_dim: int = 512, use_t_embed: bool = True):
         super().__init__()
 
@@ -133,14 +122,13 @@ class Conv2DHead(nn.Cell):
 
     def construct(self, x: ms.Tensor, t_embed: ms.Tensor) -> ms.Tensor:
         if self.norm1 is not None and t_embed is not None:
-            # rearrange x to (B, H*W, C)
             b, c, h, w = x.shape
             residual = x
             x_flat = x.permute(0, 2, 3, 1).reshape(b, h * w, c).contiguous()
             x_norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(x_flat, emb=t_embed)
             x = x_norm.reshape(b, h, w, c).permute(0, 3, 1, 2).contiguous()
 
-        x = self.conv1(x)  # (B, width, H, W)
+        x = self.conv1(x)
 
         if self.norm2 is not None:
             x = residual + gate_msa[:, :, None, None] * x
@@ -150,22 +138,17 @@ class Conv2DHead(nn.Cell):
             x = x_norm * (1 + scale_mlp[:, None, :]) + shift_mlp[:, None, :]
             x = x.reshape(b, h, w, -1).permute(0, 3, 1, 2).contiguous()
 
-        x = self.conv2(x)  # (B, width, H, W)
+        x = self.conv2(x)
 
         if self.norm1 is not None and t_embed is not None:
             x = residual + gate_mlp[:, :, None, None] * x
 
-        x = self.conv_out(x)  # (B, out_c, H, W)
+        x = self.conv_out(x)
         
         return x
     
 
 class TransformerHead(nn.Cell):
-    """
-    tokens: (B, C, H, W)
-    text_embed: (B, D_text)
-    return: logits: (B, N)
-    """
     def __init__(self, d_model: int, n_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.0):
         super().__init__()
         self.norm1 = mint.nn.LayerNorm(d_model)
@@ -239,10 +222,6 @@ class RewardHead(nn.Cell):
         self.patch_size = patch_size  
         
     def unpatchify(self, x, hw=None):
-        """
-        x: (N, T, patch_size**2 * C)
-        imgs: (N, C, H, W)
-        """
         p = self.patch_size
         c = x.shape[2] // (p ** 2)
 
@@ -279,23 +258,20 @@ class RewardHead(nn.Cell):
 
         out_features = []
         if self.conv_type in ['1d', 'transformer']:
-            # visual_features: (B, N, C)
             for head, visual_feature in zip(self.visual_heads, visual_features):
                 visual_feature = head(visual_feature)
                 visual_feature = visual_feature.mean(dim=1)
                 out_features.append(visual_feature)
                 
         elif self.conv_type == '2d':
-            # visual_features: (B, C, H, W)
             for head, visual_feature in zip(self.visual_heads, visual_features):
-                visual_feature = self.unpatchify(visual_feature, hw=hw)    # [B, h * w, p * p * C] -> [B, C, H, W]
-                visual_feature = head(visual_feature, t_embed)   # (B, C, H, W) -> (B, out_c, H, W)
+                visual_feature = self.unpatchify(visual_feature, hw=hw)
+                visual_feature = head(visual_feature, t_embed)
                 visual_feature = self.patchify(visual_feature)
                 visual_feature = visual_feature.mean(dim=1)
                 out_features.append(visual_feature)
                 
         if self.use_text_features and text_features is not None:
-            # text_features: (B, N_text, C)
             for head, text_feature in zip(self.text_heads, text_features):
                 text_feature = head(text_feature)
                 text_feature = text_feature.mean(dim=1)
@@ -316,7 +292,6 @@ class RMSNorm(nn.Cell):
         self.weight = ms.Parameter(mint.ones((dim,), dtype=ms.float32))
 
     def construct(self, x: ms.Tensor) -> ms.Tensor:
-        # x: (..., dim)
         x_f = x.astype(ms.float32)
         var = mint.mean(x_f * x_f, dim=-1, keepdim=True)
         x_norm = x_f * mint.rsqrt(var + self.eps)
@@ -335,7 +310,6 @@ class FiLMLayerAdapter(nn.Cell):
         self.proj = mint.nn.Linear(hidden_dim, output_dim)
 
     def construct(self, x: ms.Tensor, t_emb: ms.Tensor):
-        # x: (B, N, C), t_emb: (B, C)
         x = x.astype(ms.float32)
         t_emb = t_emb.astype(ms.float32)
         style = self.cond_mlp(t_emb)

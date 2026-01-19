@@ -1,8 +1,4 @@
-"""Diffusion-based reward model.
-
-Vendor-copied from `Diffusion-RM/diffusion_rm/models/sd3_rm.py` to make Flow-GRPO-MS
-self-contained (no external `diffusion_rm` dependency at runtime).
-"""
+"""Diffusion-based reward model."""
 
 import mindspore as ms
 from mindspore import mint, nn
@@ -48,7 +44,6 @@ def _encode_prompt_with_t5(
 
     _, seq_len, _ = prompt_embeds.shape
 
-    # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
@@ -86,7 +81,6 @@ def _encode_prompt_with_clip(
     prompt_embeds = hidden_states[-2] if hidden_states is not None else last_hidden_state
 
     _, seq_len, _ = prompt_embeds.shape
-    # duplicate text embeddings for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
     prompt_embeds = prompt_embeds.view((batch_size * num_images_per_prompt, seq_len, -1))
 
@@ -141,7 +135,6 @@ def encode_prompt(
 class SD3Backbone(nn.Cell):
     def __init__(self, transformer, config_model):
         super().__init__()
-        ## NOTE: All the modules should be moved to the target device and dtype before here!!!
         self.pos_embed = transformer.pos_embed
         self.time_text_embed = transformer.time_text_embed
         self.context_embedder = transformer.context_embedder
@@ -171,7 +164,6 @@ class SD3Backbone(nn.Cell):
         temb = self.time_text_embed(timestep, pooled_projections)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
-        # match dtypes to avoid Dense input/weight mismatch inside transformer blocks
         temb = temb.to(hidden_states.dtype)
         encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
 
@@ -197,7 +189,6 @@ class SD3RewardModel(nn.Cell):
 
     def __init__(self, pipeline, config_model, dtype):
         super().__init__()
-        ## NOTE: All the modules should be moved to the target device and dtype before here!!!
         self.config_model = config_model
         text_encoder_1 = pipeline.text_encoder
         text_encoder_2 = pipeline.text_encoder_2
@@ -210,7 +201,6 @@ class SD3RewardModel(nn.Cell):
         self.text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
         self.tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
 
-        # use only the first N layers of the transformer
         self.backbone = SD3Backbone(
             transformer=pipeline.transformer,
             config_model=config_model,
@@ -220,7 +210,6 @@ class SD3RewardModel(nn.Cell):
             for param in self.backbone.parameters():
                 param.requires_grad = False
         elif config_model.use_lora and config_model.lora_config is not None:
-            # Apply LoRA if specified
             target_modules = [
                 "attn.add_k_proj",
                 "attn.add_q_proj",
@@ -250,10 +239,8 @@ class SD3RewardModel(nn.Cell):
             self.backbone = get_peft_model(self.backbone, lora_config)
             # self.backbone.to(dtype=dtype)
 
-        # Get transformer output dimension
         backbone_dim = pipeline.transformer.inner_dim
         self.backbone_dim = backbone_dim
-        # Initialize reward head (only support Diffusion-RM v3 / QFormer style)
         self.reward_head = RewardHeadV3(
             token_dim=backbone_dim,
             n_visual_heads=len(config_model.visual_head_idx),
@@ -268,9 +255,6 @@ class SD3RewardModel(nn.Cell):
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 self.text_encoders, self.tokenizers, prompts, max_sequence_length=128
             )
-            # prompt_embeds = prompt_embeds.to(dtype=self.text_encoders[0].dtype)
-            # pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=self.text_encoders[0].dtype)
-
         return {
             "encoder_hidden_states": prompt_embeds,
             "pooled_projections": pooled_prompt_embeds

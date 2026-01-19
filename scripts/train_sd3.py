@@ -149,11 +149,9 @@ def train(args: argparse.Namespace):
 
     logger.info(f"\n{args}")
 
-    # load scheduler, tokenizer and models.
     with nn.no_init_parameters():
         pipeline = StableDiffusion3PipelineWithSDELogProb.from_pretrained(args.model)
 
-    # replace scheduler with FlowMatchEulerSDEDiscreteScheduler
     original_scheduler = pipeline.scheduler
     scheduler_config = FlowMatchEulerSDEDiscreteScheduler.load_config(
         args.model, subfolder="scheduler"
@@ -162,17 +160,14 @@ def train(args: argparse.Namespace):
         scheduler_config
     )
 
-    # freeze parameters of models to save more memory
     requires_grad_(pipeline.vae, False)
     requires_grad_(pipeline.text_encoder, False)
     requires_grad_(pipeline.text_encoder_2, False)
     requires_grad_(pipeline.text_encoder_3, False)
     requires_grad_(pipeline.transformer, not args.use_lora)
 
-    # disable safety checker
     pipeline.safety_checker = None
 
-    # make the progress bar nicer
     pipeline.set_progress_bar_config(
         position=1,
         disable=not is_main_process,
@@ -181,22 +176,18 @@ def train(args: argparse.Namespace):
         dynamic_ncols=True,
     )
 
-    # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora transformer) to half-precision
-    # as these weights are only used for inference, keeping weights in full precision is not required.
     inference_dtype = ms.float32
     if args.mixed_precision == "fp16":
         inference_dtype = ms.float16
     elif args.mixed_precision == "bf16":
         inference_dtype = ms.bfloat16
 
-    # cast inference time
     pipeline.vae.to(ms.float32)
     pipeline.text_encoder.to(inference_dtype)
     pipeline.text_encoder_2.to(inference_dtype)
     pipeline.text_encoder_3.to(inference_dtype)
 
     if args.use_lora:
-        # Set correct lora layers
         target_modules = [
             "attn.add_k_proj",
             "attn.add_q_proj",
@@ -228,7 +219,6 @@ def train(args: argparse.Namespace):
         filter(lambda p: p.requires_grad, pipeline.transformer.get_parameters())
     )
 
-    # print model size
     transformer_params = sum(
         [param.size for param in pipeline.transformer.get_parameters()]
     )
@@ -256,10 +246,11 @@ def train(args: argparse.Namespace):
     )
     logger.info(f"Total num. of trainable parameters: {trainable_params:,}")
 
-    if args.ema:
-        ema = EMAModuleWrapper(trainable_parameters, decay=0.9, update_step_interval=1)
-    else:
-        ema = None
+    ema = (
+        EMAModuleWrapper(trainable_parameters, decay=0.9, update_step_interval=1)
+        if args.ema
+        else None
+    )
 
     optimizer = BF16AdamW(
         trainable_parameters,
@@ -317,7 +308,6 @@ def train(args: argparse.Namespace):
         num_iters=args.num_epochs * args.num_batches_per_epoch,
     )
 
-    # create dataloader
     train_dataloader = GeneratorDataset(
         train_dataset,
         column_names="prompt",
@@ -332,7 +322,6 @@ def train(args: argparse.Namespace):
         args.test_batch_size, num_parallel_workers=1, drop_remainder=False
     )
 
-    # compute the native prompt embeddings first to save computation time
     neg_prompt_embed, _, neg_pooled_prompt_embed, _ = pipeline.encode_prompt(
         "",
         None,
@@ -353,11 +342,9 @@ def train(args: argparse.Namespace):
     if args.num_image_per_prompt == 1 and args.per_prompt_stat_tracking:
         args.per_prompt_stat_tracking = False
 
-    # initialize stat tracker
     if args.per_prompt_stat_tracking:
         stat_tracker = PerPromptStatTracker(args.global_std)
 
-    # Train!
     samples_per_epoch = (
         args.train_batch_size * num_processes * args.num_batches_per_epoch
     )
@@ -394,9 +381,6 @@ def train(args: argparse.Namespace):
         net_with_loss, grad_position=None, weights=optimizer.parameters
     )
 
-    # we always accumulate gradients across timesteps; we want args.gradient_accumulation_steps to be the
-    # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
-    # the total number of optimizer steps to accumulate across.
     gradient_accumulation_steps = args.gradient_accumulation_steps * num_train_timesteps
 
     for epoch in range(first_epoch, args.num_epochs):
@@ -426,7 +410,6 @@ def train(args: argparse.Namespace):
             )
         dist.barrier()
 
-        #################### SAMPLING ####################
         pipeline.transformer.set_train(False)
         samples = []
         for i in trange(
@@ -459,18 +442,14 @@ def train(args: argparse.Namespace):
                 width=args.resolution,
             )
 
-            # (batch_size, num_steps + 1, 16, 96, 96)
             latents = mint.stack(output.all_latents, dim=1).numpy()
 
-            # (batch_size, num_steps)
             log_probs = mint.stack(output.all_log_probs, dim=1).numpy()
 
-            # (batch_size, num_steps)
             timesteps = mint.tile(
                 pipeline.scheduler.timesteps, (args.train_batch_size, 1)
             ).numpy()
 
-            # compute rewards asynchronously
             rewards = reward_fn(output.images, prompts)
 
             samples.append(
@@ -486,7 +465,6 @@ def train(args: argparse.Namespace):
                 }
             )
 
-        # collate samples into dict where each entry has shape (num_batches_per_epoch * sample.batch_size, ...)
         samples = {
             k: (
                 np.concatenate([s[k] for s in samples], axis=0)
@@ -502,15 +480,12 @@ def train(args: argparse.Namespace):
         reward_avg = samples["rewards"]["avg"][..., None]
         samples["rewards"]["avg"] = np.repeat(reward_avg, args.num_steps, axis=1)
 
-        # gather rewards across processes
         gathered_rewards = {
             key: gather(ms.tensor(value, dtype=ms.float32)).numpy()
             for key, value in samples["rewards"].items()
         }
 
-        # per-prompt mean/std tracking
         if args.per_prompt_stat_tracking:
-            # gather the prompts across processes
             prompts = gather(samples["prompts"].tolist())
             advantages = stat_tracker.update(prompts, gathered_rewards["avg"])
             if len(set(prompts)) != samples_per_epoch // args.num_image_per_prompt:
@@ -521,7 +496,6 @@ def train(args: argparse.Namespace):
                 gathered_rewards["avg"].std() + 1e-4
             )
 
-        # ungather advantages; we only need to keep the entries corresponding to the samples on this process
         samples["advantages"] = advantages.reshape(
             num_processes, -1, advantages.shape[-1]
         )[process_index]
@@ -531,13 +505,10 @@ def train(args: argparse.Namespace):
         total_batch_size, num_timesteps = samples["timesteps"].shape
         _ = num_timesteps
 
-        #################### TRAINING ####################
         for inner_epoch in range(args.num_inner_epochs):
-            # shuffle samples along batch dimension
             perm = np.random.permutation(total_batch_size)
             samples = {k: v[perm] for k, v in samples.items()}
 
-            # rebatch for training
             samples_batched = {
                 k: v.reshape(
                     -1, total_batch_size // args.num_batches_per_epoch, *v.shape[1:]
@@ -545,20 +516,19 @@ def train(args: argparse.Namespace):
                 for k, v in samples.items()
             }
 
-            # dict of lists -> list of dicts for easier iteration
             samples_batched = [
                 dict(zip(samples_batched, x)) for x in zip(*samples_batched.values())
             ]
 
-            # train
             pipeline.transformer.set_train(True)
             train_timesteps = list(range(num_train_timesteps))
             grad_accumulated = None
 
-            if gradient_accumulation_steps > 1:
-                loss_scaler = ms.Tensor(1 / gradient_accumulation_steps)
-            else:
-                loss_scaler = None
+            loss_scaler = (
+                ms.Tensor(1 / gradient_accumulation_steps)
+                if gradient_accumulation_steps > 1
+                else None
+            )
 
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
@@ -568,7 +538,6 @@ def train(args: argparse.Namespace):
                 position=0,
             ):
                 if args.guidance_scale > 1.0:
-                    # concat negative prompts to sample prompts to avoid two forward passes
                     embeds = mint.cat(
                         [train_neg_prompt_embeds, ms.tensor(sample["prompt_embeds"])]
                     )
