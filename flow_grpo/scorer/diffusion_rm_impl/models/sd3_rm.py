@@ -172,6 +172,10 @@ class SD3Backbone(nn.Cell):
         temb = self.time_text_embed(timestep, pooled_projections)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
+        # match dtypes to avoid Dense input/weight mismatch inside transformer blocks
+        temb = temb.to(hidden_states.dtype)
+        encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
+
         hidden_states_list = [hidden_states] if self.visual_head_idx[0] == 0 else []
         encoder_hidden_states_list = [encoder_hidden_states] if self.text_head_idx[0] == 0 else []
         for index_block, block in enumerate(self.transformer_blocks):

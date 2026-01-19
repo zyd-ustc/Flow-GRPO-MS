@@ -104,6 +104,11 @@ class DRMInferencer:
 
         noisy_model_input = noisy_model_input.to(self.model_dtype)
 
+        casted = {}
+        for k, v in text_conds.items():
+            casted[k] = v.to(self.model_dtype)
+        text_conds = casted
+
         score = self.model(
             latents=noisy_model_input,
             timesteps=timesteps,
