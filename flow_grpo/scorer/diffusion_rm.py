@@ -124,7 +124,7 @@ class DiffusionRMFluxScorer(Scorer):
         #self.pipeline.vae.eval()
 
         latents_list = []
-        with ms.no_grad():
+        with ms._no_grad():
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
@@ -282,7 +282,7 @@ class DiffusionRMSD3Scorer(Scorer):
         #self.pipeline.vae.eval()
 
         latents_list = []
-        with ms.no_grad():
+        with ms._no_grad():
             for img in images:
                 img = img.convert("RGB")
                 pixel_values = self.pipeline.image_processor.preprocess(img).to(
@@ -304,7 +304,7 @@ class DiffusionRMSD3Scorer(Scorer):
     def _encode_prompts(self, prompts: List[str]) -> Dict[str, ms.Tensor]:
         from .diffusion_rm_impl.models.sd3_rm import encode_prompt
 
-        with ms.no_grad():
+        with ms._no_grad():
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 text_encoders=[
                     self.pipeline.text_encoder,

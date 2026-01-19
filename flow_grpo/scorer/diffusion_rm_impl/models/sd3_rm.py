@@ -259,7 +259,7 @@ class SD3RewardModel(nn.Cell):
         # self.reward_head = self.reward_head.to(dtype=dtype)
 
     def encode_prompt(self, prompts):
-        with ms.no_grad():
+        with ms._no_grad():
             prompt_embeds, pooled_prompt_embeds = encode_prompt(
                 self.text_encoders, self.tokenizers, prompts, max_sequence_length=128
             )

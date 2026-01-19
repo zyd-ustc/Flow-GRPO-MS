@@ -269,7 +269,7 @@ class FLUXRewardModel(nn.Cell):
         self.vae_scale_factor = vae_scale_factor
 
     def encode_prompt(self, prompts):
-        with ms.no_grad():
+        with ms._no_grad():
             prompt_embeds, pooled_prompt_embeds, text_ids = encode_prompt(
                 self.text_encoders, self.tokenizers, prompts, max_sequence_length=128
             )
