@@ -1,22 +1,20 @@
-import mindspore as ms
 import os
+
+import numpy as np
+import mindspore as ms
 from mindone.diffusers import StableDiffusion3Pipeline
 from accelerate import Accelerator
 from mindone.peft import PeftModel
-import mindspore as ms
 
 # --- 配置 ---
 MODEL_ID = "stabilityai/stable-diffusion-3.5-medium"
 # LORA_PATH = None
-LORA_PATH = "models/checkpoints/step_15000/backbone_lora"  # 填入 LoRA 路径或保持 None
+LORA_PATH = "/Users/zyd/Documents/2025/HUAWEI/RewardModel_MS/Flow-GRPO-MS/models/checkpoints/step_15000/backbone_lora"  # 填入 LoRA 路径或保持 None
 PROMPT_FILE = "dataset/ocr/test.txt"
 OUTPUT_DIR = "outputs"
 # OUTPUT_DIR = "00_outputs/final/pickscore/base"
 SEED = 42
 
-if os.path.exists(OUTPUT_DIR):
-    print(f"输出目录 {OUTPUT_DIR} 已存在，确保不会覆盖已有数据。")
-    raise ValueError("输出目录已存在。")
 
 def main():
     accelerator = Accelerator()
@@ -57,7 +55,7 @@ def main():
         # 核心逻辑：只处理属于当前 Rank 的索引
         if idx % world_size == rank:
             current_seed = SEED + idx
-            generator = ms.Generator.manual_seed(current_seed)
+            generator = np.random.default_rng(current_seed)
 
             print(f"Rank {rank} 正在处理序号 {idx}: {prompt[:30]}...")
             
