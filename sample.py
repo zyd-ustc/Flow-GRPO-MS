@@ -59,14 +59,16 @@ def main():
 
             print(f"Rank {rank} 正在处理序号 {idx}: {prompt[:30]}...")
             
-            image = pipe(
+            output = pipe(
                 prompt=prompt,
                 num_inference_steps=40,
                 guidance_scale=4.5,
                 width=512,
                 height=512,
-                generator=generator
-            ).images[0]
+                generator=generator,
+                return_dict=True,
+            )
+            image = output.images[0]
 
             # 保持原始序号作为文件名
             save_path = os.path.join(OUTPUT_DIR, f"{idx:06d}.png")
