@@ -1,14 +1,12 @@
 # Flow-GRPO-MS
 
-一个基于 MindSpore 的文本到图像强化学习项目，当前聚焦 **Diffusion-RM** 作为主奖励模型，面向 SD3/FLUX 场景。
+**Diffusion-RM** 作为主奖励模型，面向 SD3/FLUX 场景。
 
 ## 项目定位
 
 - 使用 GRPO 思路对扩散模型策略进行强化学习微调。
 - 在采样图像后，通过 Diffusion-RM 打分构造 reward/advantage。
 - 对策略网络（通常是 transformer 或 LoRA 参数）进行迭代更新。
-
-本仓库已做精简，默认只保留 Diffusion-RM 相关 scorer 路径。
 
 ## 目录结构
 
@@ -58,11 +56,6 @@ Diffusion-RM 的核心思想是：
 ```bash
 python -m pip install -r requirements.txt
 ```
-
-### 2) 准备必要路径
-
-你需要准备以下路径并导出环境变量：
-
 - `SD3_MODEL_PATH`：基础 SD3 模型路径
 - `DIFFUSION_RM_CHECKPOINT_PATH`：Diffusion-RM checkpoint 目录
 - `DIFFUSION_RM_CONFIG_PATH`：Diffusion-RM 配置文件路径
@@ -109,8 +102,3 @@ python scripts/infer_sd3.py \
 - `--diffusion-rm-u`：打分噪声强度（常用 `0.9`）
 - `--beta`：GRPO 中 KL 项系数（`0.0` 表示关闭 KL）
 
-## 注意事项
-
-- 训练与推理都需要较大显存，建议先小 batch 验证配置。
-- 路径尽量使用环境变量，不要在代码里硬编码绝对路径。
-- 当前仓库以 Diffusion-RM 为主线，其他通用 scorer 已移除。
