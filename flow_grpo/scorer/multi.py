@@ -3,19 +3,10 @@ from typing import Dict, List, Optional, Union
 
 import mindspore as ms
 import numpy as np
-from PIL import Image
 
 from .scorer import Scorer
 
 AVAILABLE_SCORERS = {
-    "aesthetic": ("aesthetic", "AestheticScorer"),
-    "jpeg-compressibility": ("compression", "JpegCompressibilityScorer"),
-    "jpeg-imcompressibility": ("compression", "JpegImcompressibilityScorer"),
-    "pickscore": ("pickscore", "PickScoreScorer"),
-    "qwenvl": ("qwenvl", "QwenVLScorer"),
-    "qwenvl-ocr-vllm": ("vllm", "QwenVLOCRVLLMScorer"),
-    "qwenvl-vllm": ("vllm", "QwenVLVLLMScorer"),
-    "unified-reward-vllm": ("vllm", "UnifiedRewardVLLMScorer"),
     "diffusion-rm-flux": ("diffusion_rm", "DiffusionRMFluxScorer"),
     "diffusion-rm-sd3": ("diffusion_rm", "DiffusionRMSD3Scorer"),
 }
@@ -31,6 +22,10 @@ class MultiScorer(Scorer):
 
     def init_scorer_cls(self):
         for score_name in self.scorers.keys():
+            if score_name not in AVAILABLE_SCORERS:
+                raise ValueError(
+                    f"Unsupported scorer: {score_name}. Available scorers: {list(AVAILABLE_SCORERS.keys())}"
+                )
             if score_name in self.scorer_configs and isinstance(self.scorer_configs[score_name], Scorer):
                 self.score_fn[score_name] = self.scorer_configs[score_name]
             else:
@@ -67,24 +62,3 @@ class MultiScorer(Scorer):
 
         score_details["avg"] = total_scores
         return score_details
-
-
-def test_multi_scorer():
-    scorers = {"jpeg-compressibility": 1.0}
-    scorer = MultiScorer(scorers)
-    images = ["assets/good.jpg", "assets/fair.jpg", "assets/poor.jpg"]
-    pil_images = [Image.open(img) for img in images]
-    print(scorer(images=pil_images))
-
-
-def test_multi_scorer_2():
-    scorers = {"unified-reward-vllm": 1.0}
-    scorer = MultiScorer(scorers)
-    images = ["assets/good.jpg", "assets/fair.jpg", "assets/poor.jpg"]
-    pil_images = [Image.open(img) for img in images]
-    prompts = ["photo of apple"] * len(images)
-    print(scorer(images=pil_images, prompts=prompts))
-
-
-if __name__ == "__main__":
-    test_multi_scorer_2()

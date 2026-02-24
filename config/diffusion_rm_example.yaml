@@ -20,14 +20,8 @@ diffusion_rm_scorer_configs:
 # MultiScorer 权重配置示例
 multi_scorer_weights:
   # 只使用 Diffusion-RM
-  only_diffusion_rm:
+  only_flux_rm:
     diffusion-rm-flux: 1.0
-
-  # 混合使用多个 scorer
-  mixed_scorers:
-    diffusion-rm-flux: 0.6      # 60% 权重
-    aesthetic: 0.2               # 20% 权重
-    pickscore: 0.2               # 20% 权重
 
   # 仅使用 SD3 Diffusion-RM
   only_sd3_rm:
